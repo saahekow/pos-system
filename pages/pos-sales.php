@@ -76,11 +76,10 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 $jobTypeStatement->execute([$jobTypeId]);
                 $customerType=(string)($jobTypeStatement->fetchColumn()?:'');
                 $locationId=max(0,(int)($_POST['temp_location_id']??0));
-                $area=trim((string)($_POST['temp_area']??''));
+                $area=null;
                 if($customerName==='')$error='Enter the temporary customer name.';
                 elseif(!is_valid_phone_number($customerPhone))$error='Enter a valid temporary customer phone number.';
                 elseif(!$locationId||!location_by_id($locationId))$error='Select the temporary customer town.';
-                elseif($area==='')$error='Enter the temporary customer area.';
                 elseif($customerType==='')$error='Select the temporary customer type.';
             }
         }
@@ -142,7 +141,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                         $customerId=(int)$existingCustomer['id'];
                         if((string)$existingCustomer['customer_status']==='temporary'){
                             db()->prepare("UPDATE customers SET customer_name=?,job_type=?,job_type_id=?,customer_status='temporary',record_status='completed' WHERE id=?")->execute([$customerName,$customerType,$jobTypeId,$customerId]);
-                            db()->prepare('UPDATE business_locations SET business_name=?,location_id=?,area=? WHERE id=?')->execute([$customerName,$locationId,$area,(int)$existingCustomer['bus_loc_id']]);
+                            db()->prepare('UPDATE business_locations SET business_name=?,location_id=? WHERE id=?')->execute([$customerName,$locationId,(int)$existingCustomer['bus_loc_id']]);
                         }else{
                             $customerMode='registered';
                             $customerName=(string)$existingCustomer['customer_name'];
@@ -233,7 +232,7 @@ require_once __DIR__ . '/../includes/header.php';
 
         <details class="pos-sales-field" data-pos-section="customer" data-pos-temp-field hidden open>
             <summary><strong>Location</strong><span>Select</span><i class="fa-solid fa-caret-down"></i></summary>
-            <div class="pos-sales-field__body pos-temp-location-fields"><div><label for="pos_temp_region">Region</label><select id="pos_temp_region" data-location-region-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select region</option><?php foreach($locationRegions as $regionKey=>$regionName):?><option value="<?=e((string)$regionKey)?>"><?=e($regionName)?></option><?php endforeach;?></select></div><div><label for="pos_temp_town">Town</label><select id="pos_temp_town" name="temp_location_id" data-location-town-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select town</option><option value="__other__" data-add-town-option="true">Other — add a new town</option><?php foreach($locations as $location):?><option value="<?=(int)$location['id']?>" data-region-key="<?=e((string)($location['region_code']?:$location['region_name']))?>" data-mmda-name="<?=e((string)$location['mmda_name'])?>"><?=e((string)$location['town_name'])?><?= (int)$location['is_capital']===1?' *':'' ?></option><?php endforeach;?></select></div><div><label for="pos_temp_area">Area</label><input id="pos_temp_area" name="temp_area" placeholder="Enter area" data-required-when-temp disabled></div></div>
+            <div class="pos-sales-field__body pos-temp-location-fields"><div><label for="pos_temp_region">Region</label><select id="pos_temp_region" data-location-region-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select region</option><?php foreach($locationRegions as $regionKey=>$regionName):?><option value="<?=e((string)$regionKey)?>"><?=e($regionName)?></option><?php endforeach;?></select></div><div><label for="pos_temp_town">Town</label><select id="pos_temp_town" name="temp_location_id" data-location-town-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select town</option><option value="__other__" data-add-town-option="true">Other — add a new town</option><?php foreach($locations as $location):?><option value="<?=(int)$location['id']?>" data-region-key="<?=e((string)($location['region_code']?:$location['region_name']))?>" data-mmda-name="<?=e((string)$location['mmda_name'])?>"><?=e((string)$location['town_name'])?><?= (int)$location['is_capital']===1?' *':'' ?></option><?php endforeach;?></select></div></div>
         </details>
 
         <details class="pos-sales-field pos-sales-derived-field" data-pos-section="customer-type" data-pos-customer-type-field data-pos-temp-only hidden open>

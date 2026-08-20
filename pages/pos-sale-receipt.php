@@ -42,6 +42,7 @@ if($items){
     foreach($vinStatement->fetchAll() as $vinRow)$vinsByItem[(int)$vinRow['sale_item_id']][]=(string)$vinRow['vin_number'];
 }
 $receiptTotal=$items?array_sum(array_map(static fn(array $item):float=>(float)$item['total_amount'],$items)):(float)$sale['subtotal'];
+$receiptDiscount=$items?array_sum(array_map(static fn(array $item):float=>(float)($item['customer_discount_amount']??0),$items)):(float)($sale['customer_discount_amount']??0);
 $isVendorReceipt=(string)($sale['recorder_role']??'')==='vendor'&&(int)($sale['recorder_vendor_id']??0)>0;
 $issuerName=$isVendorReceipt?(string)$sale['recorder_vendor_name']:COMPANY_NAME;
 $issuerPhone=$isVendorReceipt?trim((string)($sale['recorder_vendor_phone']??'')):'';
@@ -94,8 +95,9 @@ require_once __DIR__.'/../includes/header.php';
             <dl class="pos-receipt__reference"><div><dt>Receipt #:</dt><dd><?=e((string)$sale['sale_ref'])?></dd></div><div><dt>Date:</dt><dd><?=e(date('j M Y',strtotime((string)$sale['sale_date'])))?></dd></div><div><dt>Time:</dt><dd><?=e(date('H:i',strtotime((string)$sale['created_at'])))?></dd></div></dl>
         </section>
 
-        <section class="pos-receipt__items"><div class="pos-receipt__table"><table><thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead><tbody><?php foreach($items as $item):?><tr><td><strong><?=e(trim((string)$item['brand_name'].' '.(string)$item['plug_number']))?></strong><?php if(!empty($vinsByItem[(int)$item['id']])):?><small>VIN: <?=e(implode(', ',$vinsByItem[(int)$item['id']]))?></small><?php endif;?></td><td><?=(int)$item['quantity']?></td><td><?=e(number_format((float)$item['unit_price'],2))?></td><td><?=e(number_format((float)$item['total_amount'],2))?></td></tr><?php endforeach;?><?php if(!$items):?><tr><td colspan="4">Item details are not available for this sale.</td></tr><?php endif;?></tbody></table></div></section>
+        <section class="pos-receipt__items"><div class="pos-receipt__table"><table><thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead><tbody><?php foreach($items as $item):?><tr><td><strong><?=e(trim((string)$item['brand_name'].' '.(string)$item['plug_number']))?></strong><?php if((float)($item['customer_discount_amount']??0)>0):?><small class="pos-receipt__discount-note">Regular GHS <?=e(number_format((float)$item['list_unit_price'],2))?> · Discount GHS <?=e(number_format((float)$item['customer_discount_amount'],2))?></small><?php endif;?><?php if(!empty($vinsByItem[(int)$item['id']])):?><small>VIN: <?=e(implode(', ',$vinsByItem[(int)$item['id']]))?></small><?php endif;?></td><td><?=(int)$item['quantity']?></td><td><?=e(number_format((float)$item['unit_price'],2))?></td><td><?=e(number_format((float)$item['total_amount'],2))?></td></tr><?php endforeach;?><?php if(!$items):?><tr><td colspan="4">Item details are not available for this sale.</td></tr><?php endif;?></tbody></table></div></section>
 
+        <?php if($receiptDiscount>0):?><dl class="pos-receipt__discount-summary"><div><dt>Regular total</dt><dd>GHS <?=e(number_format($receiptTotal+$receiptDiscount,2))?></dd></div><div><dt>Customer discount</dt><dd>− GHS <?=e(number_format($receiptDiscount,2))?></dd></div></dl><?php endif;?>
         <div class="pos-receipt__total"><span>Total</span><strong>GHS <?=e(number_format($receiptTotal,2))?></strong></div>
         <footer class="pos-receipt__footer"><p>Thank you for your purchase.</p><small>Recorded by <?=e((string)($sale['recorded_by']?:'System'))?> · <?=e(date('d M Y H:i',strtotime((string)$sale['created_at'])))?></small></footer>
     </article>

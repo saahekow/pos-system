@@ -171,7 +171,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
 if(isset($_GET['message']))$message=trim((string)$_GET['message']);
 $regions=db()->query("SELECT * FROM locations WHERE entry_type='region' ORDER BY region_name")->fetchAll();
 $mmdas=db()->query("SELECT * FROM locations WHERE entry_type='mmda' ORDER BY region_name,mmda_name")->fetchAll();
-$towns=db()->query("SELECT * FROM locations WHERE entry_type='town' ORDER BY region_name,mmda_name,town_name")->fetchAll();
+$towns=db()->query("SELECT * FROM locations WHERE entry_type='town' ORDER BY town_name,region_name,mmda_name")->fetchAll();
 $editing=null;
 if($editId){$statement=db()->prepare('SELECT * FROM locations WHERE id=?');$statement->execute([$editId]);$editing=$statement->fetch()?:null;}
 require_once __DIR__.'/../includes/header.php';

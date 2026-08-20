@@ -54,7 +54,7 @@ if($view==='menu'){
 }elseif($view==='admin'){
  if(!is_admin_user()){header('Location: '.app_url('pos.php'));exit;}
  $modules=[
- ['title'=>'Setup','description'=>'Configure POS referral and discount options.','icon'=>'fa-solid fa-sliders','url'=>app_url('pos.php?view=setup')],
+ ['title'=>'Setup','description'=>'Configure POS referral and commission options.','icon'=>'fa-solid fa-sliders','url'=>app_url('pos.php?view=setup')],
  ['title'=>'Personnel Assignment','description'=>'Create and assign vendor personnel for SPW Sales access.','icon'=>'fa-solid fa-people-group','url'=>app_url('vendor-personnel.php')],
  ... (is_super_admin() ? [['title'=>'Day Closures','description'=>'View vendor closures, snapshots, and reopen audit history.','icon'=>'fa-solid fa-lock-open','url'=>app_url('close-day.php')]] : []),
  ];
@@ -62,7 +62,7 @@ if($view==='menu'){
  if(!is_admin_user()){header('Location: '.app_url('pos.php'));exit;}
  $modules=[
  ['title'=>'Referral Source Setup','description'=>'Manage referral choices used by POS Sales.','icon'=>'fa-solid fa-bullhorn','url'=>app_url('pos-referral-setup.php?return_to='.rawurlencode(app_url('pos.php?view=setup')))],
- ['title'=>'Plug Discount Setup','description'=>'Manage spark plug discount percentages.','icon'=>'fa-solid fa-percent','url'=>app_url('pos-discount-setup.php?return_to='.rawurlencode(app_url('pos.php?view=setup')))],
+ ['title'=>'Plug Commission Setup','description'=>'Manage spark plug commission percentages.','icon'=>'fa-solid fa-percent','url'=>app_url('pos-discount-setup.php?return_to='.rawurlencode(app_url('pos.php?view=setup')))],
  ];
 }
 ?>

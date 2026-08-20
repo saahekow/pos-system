@@ -16,9 +16,9 @@ $sparkPlugs = db()->query(
     "SELECT sp.id,sp.brand_name,sp.plug_number,
             (SELECT ph.id FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) AS price_history_id,
             (SELECT ph.price FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) AS current_price,
-            COALESCE(d.discount_percentage,0) AS discount_percentage
+            COALESCE(d.commission_percentage,0) AS discount_percentage
      FROM spark_plugs sp
-     LEFT JOIN plug_discounts d ON d.spark_plug_id=sp.id AND d.is_active=1
+     LEFT JOIN plug_commissions d ON d.spark_plug_id=sp.id AND d.is_active=1
      WHERE sp.is_active=1
      ORDER BY sp.brand_name,sp.plug_number"
 )->fetchAll();
@@ -53,8 +53,8 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         $productStatement=db()->prepare("SELECT sp.id,sp.brand_name,sp.plug_number,
             (SELECT ph.id FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) price_history_id,
             (SELECT ph.price FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) unit_price,
-            d.id discount_id,COALESCE(d.discount_percentage,0) discount_percentage
-            FROM spark_plugs sp LEFT JOIN plug_discounts d ON d.spark_plug_id=sp.id AND d.is_active=1
+            d.id discount_id,COALESCE(d.commission_percentage,0) discount_percentage
+            FROM spark_plugs sp LEFT JOIN plug_commissions d ON d.spark_plug_id=sp.id AND d.is_active=1
             WHERE sp.id=? AND sp.brand_name=? AND sp.is_active=1 LIMIT 1");
         foreach($plugIds as $index=>$plugId){
             if($error!=='')break;
@@ -76,10 +76,10 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             db()->beginTransaction();
             $transferRef=next_project_reference('pos_transfer');
             $vendorLocation=implode(', ',array_filter([(string)($selectedVendor['area']??''),(string)($selectedVendor['town_name']??''),(string)($selectedVendor['region_name']??'')]));
-            db()->prepare("INSERT INTO pos_transfers(transfer_ref,transfer_date,vendor_id,vendor_name,vendor_phone,vendor_email,vendor_location,gross_amount,discount_amount,total_amount,status,note,recorded_by_user_id,dispatched_at) VALUES(?,?,?,?,?,?,?,?,?,?,'dispatched',?,?,NOW())")
+            db()->prepare("INSERT INTO pos_transfers(transfer_ref,transfer_date,vendor_id,vendor_name,vendor_phone,vendor_email,vendor_location,gross_amount,commission_amount,total_amount,status,note,recorded_by_user_id,dispatched_at) VALUES(?,?,?,?,?,?,?,?,?,?,'dispatched',?,?,NOW())")
                 ->execute([$transferRef,$transferDate,$vendorId,(string)$selectedVendor['vendor_name'],(string)($selectedVendor['phone']??'')?:null,(string)($selectedVendor['email']??'')?:null,$vendorLocation?:null,round($grossTotal,2),round($discountTotal,2),round($netTotal,2),$note?:null,current_user_id()]);
             $transferId=(int)db()->lastInsertId();
-            $insertItem=db()->prepare('INSERT INTO pos_transfer_items(transfer_id,spark_plug_id,price_history_id,discount_id,brand_name,plug_number,box_quantity,pieces_per_box,total_pieces,unit_price,gross_amount,discount_percentage,discount_amount,total_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+            $insertItem=db()->prepare('INSERT INTO pos_transfer_items(transfer_id,spark_plug_id,price_history_id,commission_id,brand_name,plug_number,box_quantity,pieces_per_box,total_pieces,unit_price,gross_amount,commission_percentage,commission_amount,total_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
             foreach($transferProducts as $line){$product=$line['product'];$insertItem->execute([$transferId,(int)$product['id'],(int)($product['price_history_id']??0)?:null,(int)($product['discount_id']??0)?:null,(string)$product['brand_name'],(string)$product['plug_number'],$line['boxes'],$line['pieces_per_box'],$line['total_pieces'],$line['unit_price'],$line['gross'],$line['discount_percentage'],$line['discount'],$line['net']]);}
             db()->commit();header('Location: '.app_url('pos-transfer.php?saved='.rawurlencode($transferRef)));exit;
         }catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error='The transfer could not be saved.';}
@@ -172,7 +172,7 @@ require_once __DIR__ . '/../includes/header.php';
                         <div class="pos-transfer-money"><span>GH&#8373;</span><input name="products[unit_price][]" type="number" min="0" step="0.01" placeholder="0.00" data-transfer-unit-price readonly><input name="products[price_history_id][]" type="hidden" data-transfer-price-history><input name="products[discount_percentage][]" type="hidden" data-transfer-discount-percentage></div>
                     </label>
                 </div>
-                <div class="pos-transfer-line-total"><span><small>Pieces</small><strong data-transfer-piece-count>0 pieces</strong><em>4 per box</em></span><span><small>Box discount</small><strong data-transfer-discount-value>GH&#8373; 0.00</strong><em data-transfer-discount-label>No discount</em></span><span><small>Line total</small><strong data-transfer-line-total>GH&#8373; 0.00</strong><em>After discount</em></span></div>
+                <div class="pos-transfer-line-total"><span><small>Pieces</small><strong data-transfer-piece-count>0 pieces</strong><em>4 per box</em></span><span><small>Box commission</small><strong data-transfer-discount-value>GH&#8373; 0.00</strong><em data-transfer-discount-label>No commission</em></span><span><small>Line total</small><strong data-transfer-line-total>GH&#8373; 0.00</strong><em>After commission</em></span></div>
             </article>
         </template>
 
@@ -222,7 +222,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (output) output.textContent = money(lineTotal);
             if (pieceOutput) pieceOutput.textContent = pieces.toLocaleString('en-GH') + (pieces === 1 ? ' piece' : ' pieces');
             if (discountOutput) discountOutput.textContent = discountAmount > 0 ? '- ' + money(discountAmount) : money(0);
-            if (discountLabel) discountLabel.textContent = discountPercentage > 0 ? formatDiscount(discountPercentage) + '% box discount' : 'No box discount';
+            if (discountLabel) discountLabel.textContent = discountPercentage > 0 ? formatDiscount(discountPercentage) + '% box commission' : 'No box commission';
             if (summary) {
                 const productName = [brand, plug].filter(Boolean).join(' · ') || 'Not selected';
                 summary.textContent = productName + (boxes > 0 ? ' · ' + boxes + (boxes === 1 ? ' box' : ' boxes') : '') + (lineTotal > 0 ? ' · ' + money(lineTotal) : '');

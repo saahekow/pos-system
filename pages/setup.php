@@ -32,8 +32,8 @@ $modules = [
         'url' => app_url('pos-referral-setup.php'),
     ],
     [
-        'title' => 'Plug Discount Setup',
-        'description' => 'Assign box discount percentages to spark plug numbers.',
+        'title' => 'Plug Commission Setup',
+        'description' => 'Assign box commission percentages to spark plug numbers.',
         'icon' => 'fa-solid fa-percent',
         'url' => app_url('pos-discount-setup.php'),
     ],

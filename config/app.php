@@ -25,7 +25,7 @@ const APP_IMAGE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 const APP_IMAGE_UPLOAD_MAX_LABEL = '50MB';
 
 ini_set('upload_max_filesize', APP_IMAGE_UPLOAD_MAX_LABEL);
-ini_set('post_max_size', '60M');
+ini_set('post_max_size', '220M');
 ini_set('max_input_time', '180');
 ini_set('max_execution_time', '180');
 
@@ -308,7 +308,7 @@ function ensure_location_schema(): void
 function active_locations(): array
 {
     ensure_location_schema();
-    return db()->query("SELECT id,region_code,region_name,mmda_code,mmda_name,town_name,is_capital FROM locations WHERE is_active=1 AND entry_type='town' AND town_name IS NOT NULL AND town_name<>'' ORDER BY region_name,mmda_name,town_name")->fetchAll();
+    return db()->query("SELECT id,region_code,region_name,mmda_code,mmda_name,town_name,is_capital FROM locations WHERE is_active=1 AND entry_type='town' AND town_name IS NOT NULL AND town_name<>'' ORDER BY town_name,region_name,mmda_name")->fetchAll();
 }
 
 function location_by_id(int $locationId, bool $activeOnly = true): ?array
@@ -555,25 +555,42 @@ function ensure_pos_referral_source_schema(): void
     $schemaReady = true;
 }
 
-function ensure_pos_plug_discount_schema(): void
+function ensure_pos_plug_commission_schema(): void
 {
     static $schemaReady = false;
     if ($schemaReady) return;
     run_app_migration('20260809_create_pos_plug_discounts', function (): void {
-    db()->exec("CREATE TABLE IF NOT EXISTS plug_discounts (
+    db()->exec("CREATE TABLE IF NOT EXISTS plug_commissions (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
         spark_plug_id BIGINT UNSIGNED NOT NULL,
-        discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 20.00,
+        commission_percentage DECIMAL(5,2) NOT NULL DEFAULT 20.00,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_by_user_id INT UNSIGNED NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-        UNIQUE KEY uq_plug_discounts_plug (spark_plug_id),
-        KEY idx_plug_discounts_active (is_active),
-        CONSTRAINT fk_plug_discounts_plug FOREIGN KEY (spark_plug_id) REFERENCES spark_plugs(id) ON DELETE CASCADE ON UPDATE CASCADE
+        UNIQUE KEY uq_plug_commissions_plug (spark_plug_id),
+        KEY idx_plug_commissions_active (is_active),
+        CONSTRAINT fk_plug_commissions_plug FOREIGN KEY (spark_plug_id) REFERENCES spark_plugs(id) ON DELETE CASCADE ON UPDATE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-    db()->exec("INSERT IGNORE INTO plug_discounts(spark_plug_id,discount_percentage,is_active)
+    db()->exec("INSERT IGNORE INTO plug_commissions(spark_plug_id,commission_percentage,is_active)
         SELECT id,20.00,1 FROM spark_plugs WHERE is_active=1");
+    });
+    run_app_migration('20260820_rename_plug_discounts_to_commissions', function (): void {
+        $constraintExists=db()->prepare("SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME=? AND CONSTRAINT_NAME=? AND CONSTRAINT_TYPE='FOREIGN KEY'");
+        if (db_table_exists('pos_transfer_items')) {
+            $constraintExists->execute(['pos_transfer_items','fk_pos_transfer_items_discount']);
+            if ((int)$constraintExists->fetchColumn()) db()->exec('ALTER TABLE pos_transfer_items DROP FOREIGN KEY fk_pos_transfer_items_discount');
+        }
+        if (db_table_exists('plug_discounts') && !db_table_exists('plug_commissions')) db()->exec('RENAME TABLE plug_discounts TO plug_commissions');
+        if (db_table_exists('plug_commissions') && db_column_exists('plug_commissions','discount_percentage')) db()->exec('ALTER TABLE plug_commissions CHANGE discount_percentage commission_percentage DECIMAL(5,2) NOT NULL DEFAULT 20.00');
+        if (db_table_exists('pos_transfers') && db_column_exists('pos_transfers','discount_amount')) db()->exec('ALTER TABLE pos_transfers CHANGE discount_amount commission_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00');
+        if (db_table_exists('pos_transfer_items')) {
+            if (db_column_exists('pos_transfer_items','discount_id')) db()->exec('ALTER TABLE pos_transfer_items CHANGE discount_id commission_id BIGINT UNSIGNED NULL');
+            if (db_column_exists('pos_transfer_items','discount_percentage')) db()->exec('ALTER TABLE pos_transfer_items CHANGE discount_percentage commission_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.00');
+            if (db_column_exists('pos_transfer_items','discount_amount')) db()->exec('ALTER TABLE pos_transfer_items CHANGE discount_amount commission_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00');
+            $constraintExists->execute(['pos_transfer_items','fk_pos_transfer_items_commission']);
+            if (!(int)$constraintExists->fetchColumn()) db()->exec('ALTER TABLE pos_transfer_items ADD CONSTRAINT fk_pos_transfer_items_commission FOREIGN KEY (commission_id) REFERENCES plug_commissions(id) ON DELETE SET NULL ON UPDATE CASCADE');
+        }
     });
     $schemaReady = true;
 }
@@ -594,7 +611,7 @@ function ensure_pos_transfer_schema(): void
         vendor_email VARCHAR(160) NULL,
         vendor_location VARCHAR(255) NULL,
         gross_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00,
-        discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+        commission_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00,
         total_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00,
         status ENUM('draft','dispatched','received','disputed','rejected','cancelled') NOT NULL DEFAULT 'dispatched',
         note TEXT NULL,
@@ -616,7 +633,7 @@ function ensure_pos_transfer_schema(): void
         transfer_id BIGINT UNSIGNED NOT NULL,
         spark_plug_id BIGINT UNSIGNED NOT NULL,
         price_history_id BIGINT UNSIGNED NULL,
-        discount_id BIGINT UNSIGNED NULL,
+        commission_id BIGINT UNSIGNED NULL,
         brand_name VARCHAR(64) NOT NULL,
         plug_number VARCHAR(80) NOT NULL,
         box_quantity INT UNSIGNED NOT NULL,
@@ -624,8 +641,8 @@ function ensure_pos_transfer_schema(): void
         total_pieces INT UNSIGNED NOT NULL,
         unit_price DECIMAL(14,2) NOT NULL,
         gross_amount DECIMAL(14,2) NOT NULL,
-        discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-        discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+        commission_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        commission_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00,
         total_amount DECIMAL(14,2) NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
@@ -634,7 +651,7 @@ function ensure_pos_transfer_schema(): void
         CONSTRAINT fk_pos_transfer_items_transfer FOREIGN KEY (transfer_id) REFERENCES pos_transfers(id) ON DELETE CASCADE ON UPDATE CASCADE,
         CONSTRAINT fk_pos_transfer_items_plug FOREIGN KEY (spark_plug_id) REFERENCES spark_plugs(id) ON UPDATE CASCADE,
         CONSTRAINT fk_pos_transfer_items_price FOREIGN KEY (price_history_id) REFERENCES plug_price_history(id) ON DELETE SET NULL ON UPDATE CASCADE,
-        CONSTRAINT fk_pos_transfer_items_discount FOREIGN KEY (discount_id) REFERENCES plug_discounts(id) ON DELETE SET NULL ON UPDATE CASCADE
+        CONSTRAINT fk_pos_transfer_items_commission FOREIGN KEY (commission_id) REFERENCES plug_commissions(id) ON DELETE SET NULL ON UPDATE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     });
     run_app_migration('20260810_add_pos_transfer_acceptance', function (): void {
@@ -716,6 +733,7 @@ function ensure_pos_sales_schema(): void
 {
     static $schemaReady = false;
     if ($schemaReady) return;
+    ensure_pos_plug_commission_schema();
     run_app_migration('20260808_create_and_normalize_pos_sales', function (): void {
     ensure_pos_referral_source_schema();
     ensure_customer_status_schema();
@@ -769,7 +787,7 @@ function ensure_pos_sales_schema(): void
     if (!(int)$indexCheck->fetchColumn()) db()->exec('ALTER TABLE spark_plugs ADD UNIQUE KEY uq_spark_plugs_brand_number (brand_name,plug_number)');
     $indexCheck->execute(['spark_plugs','idx_spark_plugs_brand']);
     if (!(int)$indexCheck->fetchColumn()) db()->exec('ALTER TABLE spark_plugs ADD KEY idx_spark_plugs_brand (brand_name)');
-    ensure_pos_plug_discount_schema();
+    ensure_pos_plug_commission_schema();
     db()->exec("CREATE TABLE IF NOT EXISTS plug_price_history (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
         spark_plug_id BIGINT UNSIGNED NOT NULL,
@@ -880,6 +898,12 @@ function ensure_pos_sales_schema(): void
         if (db_column_exists('pos_sale_items','commission_amount')) db()->exec('ALTER TABLE pos_sale_items MODIFY commission_amount DECIMAL(14,2) NULL DEFAULT NULL');
         db()->exec("UPDATE pos_sales SET commission_amount=NULL,amount_less_commission=net_sales WHERE sale_source='pos' AND sales_type='direct'");
         db()->exec("UPDATE pos_sale_items si INNER JOIN pos_sales s ON s.id=si.sale_id SET si.commission_percentage=NULL,si.commission_amount=NULL WHERE s.sale_source='pos' AND s.sales_type='direct'");
+    });
+    run_app_migration('20260820_add_customer_price_discounts', function (): void {
+        if (!db_column_exists('pos_sales','customer_discount_amount')) db()->exec('ALTER TABLE pos_sales ADD COLUMN customer_discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 AFTER subtotal');
+        if (!db_column_exists('pos_sale_items','list_unit_price')) db()->exec('ALTER TABLE pos_sale_items ADD COLUMN list_unit_price DECIMAL(14,2) NOT NULL DEFAULT 0.00 AFTER unit_price');
+        if (!db_column_exists('pos_sale_items','customer_discount_amount')) db()->exec('ALTER TABLE pos_sale_items ADD COLUMN customer_discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 AFTER total_amount');
+        db()->exec('UPDATE pos_sale_items SET list_unit_price=unit_price WHERE list_unit_price=0');
     });
     $schemaReady = true;
 }
@@ -1810,6 +1834,8 @@ function vendor_day_summary(int $vendorId, string $businessDate): array
     $summary = $totals->fetch() ?: [];
     $products = db()->prepare("SELECT si.brand_name,si.plug_number,SUM(si.quantity) quantity,SUM(si.total_amount) gross_amount FROM pos_sale_items si INNER JOIN pos_sales s ON s.id=si.sale_id WHERE s.vendor_id=? AND s.sale_date=? AND s.status='completed' GROUP BY si.brand_name,si.plug_number ORDER BY si.brand_name,si.plug_number");
     $products->execute([$vendorId,$businessDate]);
+    $customers = db()->prepare("SELECT s.id sale_id,COALESCE(NULLIF(s.customer_name,''),'Walk-in customer') customer_name,si.brand_name,si.plug_number,si.quantity,si.total_amount amount,s.subtotal grand_total,s.delivery_charge,s.amount_less_commission final_total FROM pos_sales s INNER JOIN pos_sale_items si ON si.sale_id=s.id WHERE s.vendor_id=? AND s.sale_date=? AND s.status='completed' ORDER BY customer_name,s.id,si.id");
+    $customers->execute([$vendorId,$businessDate]);
     $breakdown = db()->prepare("SELECT CASE WHEN sale_source='sor' THEN 'SoR' ELSE 'Direct' END sale_channel,COUNT(*) sale_count,COALESCE(SUM(subtotal),0) gross_sales,COALESCE(SUM(delivery_charge),0) delivery_charges,COALESCE(SUM(net_sales),0) net_sales,COALESCE(SUM(commission_amount),0) discounts_commissions,COALESCE(SUM(amount_less_commission),0) total_after_commission FROM pos_sales WHERE vendor_id=? AND sale_date=? AND status='completed' GROUP BY CASE WHEN sale_source='sor' THEN 'SoR' ELSE 'Direct' END ORDER BY sale_channel");
     $breakdown->execute([$vendorId,$businessDate]);
     $personnel = db()->prepare("SELECT COALESCE(NULLIF(vendor_personnel_name,''),u.full_name,'Unknown') personnel_name,recorded_by_user_id,COUNT(*) sale_count,COALESCE(SUM(subtotal),0) gross_sales,COALESCE(SUM(delivery_charge),0) delivery_charges,COALESCE(SUM(net_sales),0) net_sales,COALESCE(SUM(commission_amount),0) discounts_commissions,COALESCE(SUM(amount_less_commission),0) total_after_commission FROM pos_sales s LEFT JOIN users u ON u.id=s.recorded_by_user_id WHERE s.vendor_id=? AND s.sale_date=? AND s.status='completed' GROUP BY recorded_by_user_id,COALESCE(NULLIF(vendor_personnel_name,''),u.full_name,'Unknown') ORDER BY personnel_name");
@@ -1822,6 +1848,7 @@ function vendor_day_summary(int $vendorId, string $businessDate): array
         'net_sales'=>(float)($summary['net_sales']??0),
         'discounts_commissions'=>(float)($summary['discounts_commissions']??0),
         'amount_less_commission'=>(float)($summary['amount_less_commission']??0),
+        'customers'=>$customers->fetchAll(),
         'products'=>$products->fetchAll(),
         'channels'=>$breakdown->fetchAll(),
         'personnel'=>$personnel->fetchAll(),
@@ -2211,7 +2238,7 @@ function assigned_towns_for_vendor(int $vendorId): array
          LEFT JOIN vendors v ON v.id=?
          LEFT JOIN vendor_town_assignments vta ON vta.vendor_id=v.id AND vta.location_id=l.id AND vta.is_active=1
          WHERE l.is_active=1 AND l.entry_type='town' AND (l.id=v.location_id OR vta.id IS NOT NULL)
-         ORDER BY l.region_name,l.mmda_name,l.town_name"
+         ORDER BY l.town_name,l.region_name,l.mmda_name"
     );
     $statement->execute([$vendorId]);
     return $statement->fetchAll();

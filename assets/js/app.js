@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     setupInternalPageBack();
     setupSystemNotifications();
+    setupOtherTownCreation();
     setupStandaloneCustomerFlow();
     const cards = document.querySelectorAll('.module-card');
 
@@ -691,6 +692,99 @@ function setupUnifiedLocationLookup() {
         regionSelect.addEventListener('change', () => syncTowns(true));
         vendorSelect?.addEventListener('change', () => syncTowns(true));
         syncTowns(false);
+    });
+}
+
+function setupOtherTownCreation() {
+    document.querySelectorAll('form').forEach((form) => {
+        if ((form.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+
+        const townSelect = form.querySelector('[data-location-town-select]');
+        const regionSelect = form.querySelector('[data-location-region-select]');
+        if (!townSelect || !regionSelect || townSelect.hasAttribute('data-report-lookup')) return;
+
+        const otherOption = townSelect.querySelector('option[value="__other__"]') || document.createElement('option');
+        otherOption.value = '__other__';
+        otherOption.textContent = 'Other — add a new town';
+        otherOption.dataset.addTownOption = 'true';
+        if (!otherOption.isConnected) townSelect.appendChild(otherOption);
+
+        const field = townSelect.closest('.form-field') || townSelect.parentElement;
+        if (!field) return;
+
+        const panel = document.createElement('div');
+        panel.className = 'new-town-fields';
+        panel.hidden = true;
+        panel.innerHTML = `
+            <label>
+                <span>New town name</span>
+                <input type="text" data-new-town-name maxlength="160" autocomplete="address-level2" required disabled>
+            </label>
+            <small data-new-town-error hidden></small>
+        `;
+        field.insertAdjacentElement('afterend', panel);
+
+        const nameInput = panel.querySelector('[data-new-town-name]');
+        const errorOutput = panel.querySelector('[data-new-town-error]');
+
+        const syncOtherMetadata = () => {
+            otherOption.dataset.regionKey = regionSelect.value;
+            const vendorSelect = form.querySelector('[data-admin-customer-vendor]');
+            if (vendorSelect) otherOption.dataset.vendorId = vendorSelect.value;
+        };
+
+        const syncPanel = () => {
+            const active = townSelect.value === '__other__';
+            panel.hidden = !active;
+            nameInput.disabled = !active;
+            if (active) nameInput.focus();
+        };
+
+        regionSelect.addEventListener('change', syncOtherMetadata);
+        form.querySelector('[data-admin-customer-vendor]')?.addEventListener('change', syncOtherMetadata);
+        townSelect.addEventListener('change', syncPanel);
+        syncOtherMetadata();
+        syncPanel();
+
+        form.addEventListener('submit', async (event) => {
+            if (townSelect.value !== '__other__' || form.dataset.newTownCreated === 'true') return;
+            event.preventDefault();
+            errorOutput.hidden = true;
+
+            if (!regionSelect.value || !nameInput.value.trim()) {
+                errorOutput.textContent = 'Select a region, then enter the new town name.';
+                errorOutput.hidden = false;
+                return;
+            }
+
+            const csrf = form.querySelector('[name="csrf_token"]')?.value || '';
+            const vendorId = form.querySelector('[name="vendor_id"]')?.value || '';
+            const body = new FormData();
+            body.set('csrf_token', csrf);
+            body.set('region_key', regionSelect.value);
+            body.set('town_name', nameInput.value.trim());
+            body.set('vendor_id', vendorId);
+
+            try {
+                const response = await fetch(new URL('town-create.php', window.location.href), {
+                    method: 'POST',
+                    body,
+                    headers: { Accept: 'application/json' },
+                });
+                const result = await response.json();
+                if (!response.ok || !result.ok) throw new Error(result.message || 'The town could not be added.');
+
+                const option = new Option(result.town.name, String(result.town.id), true, true);
+                option.dataset.regionKey = result.town.region_key;
+                option.dataset.mmdaName = result.town.mmda_name;
+                townSelect.insertBefore(option, otherOption);
+                form.dataset.newTownCreated = 'true';
+                form.requestSubmit(event.submitter || undefined);
+            } catch (error) {
+                errorOutput.textContent = error instanceof Error ? error.message : 'The town could not be added.';
+                errorOutput.hidden = false;
+            }
+        });
     });
 }
 
@@ -2036,6 +2130,7 @@ function setupReportModePanels() {
 
 function setupFormLookupSelects() {
     document.querySelectorAll('.visit-registration-form select, .mobile-line-form select, select[data-popup-select]').forEach((select) => {
+        select.setAttribute('data-popup-search', '');
         createLookupButton(select, {
             buttonClass: 'form-lookup-button',
             emptyText: select.hasAttribute('data-popup-select')
@@ -2059,6 +2154,7 @@ function hasReportLookupValue(form) {
 }
 
 function createReportLookupButton(select) {
+    select.setAttribute('data-popup-search', '');
     createLookupButton(select, {
         buttonClass: 'report-lookup-button',
         emptyText: null,
@@ -2154,7 +2250,13 @@ function openReportLookup(select) {
 
 function openLookupDialog(select) {
     const hideEmpty = select.hasAttribute('data-popup-hide-empty');
-    const options = Array.from(select.options).filter((option) => !option.hidden && !option.disabled && (!hideEmpty || option.value !== ''));
+    const options = Array.from(select.options)
+        .filter((option) => !option.hidden && !option.disabled && (!hideEmpty || option.value !== ''))
+        .sort((a, b) => {
+            if (a.dataset.addTownOption === 'true') return -1;
+            if (b.dataset.addTownOption === 'true') return 1;
+            return 0;
+        });
     const searchable = select.hasAttribute('data-popup-search');
     const fieldLabel = select.closest('.form-field')?.querySelector('label')?.textContent.trim() || 'Choose';
     const existingDialog = document.querySelector('.report-lookup-backdrop');
@@ -2195,6 +2297,9 @@ function openLookupDialog(select) {
         button.setAttribute('role', 'option');
         button.setAttribute('aria-selected', String(option.selected));
         button.dataset.searchText = option.textContent.trim().toLowerCase();
+        if (option.dataset.addTownOption === 'true') {
+            button.classList.add('is-add-town-option');
+        }
         const optionText = option.textContent.trim();
         const isCapitalTown = option.dataset.isCapital === '1';
         button.textContent = isCapitalTown ? optionText.replace(/\s*\*\s*$/, '') : optionText;

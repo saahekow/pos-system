@@ -29,7 +29,7 @@ $sparkPlugs = db()->query(
             (SELECT ph.effective_at FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_effective_at,
             (SELECT ph.price FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1 OFFSET 1) previous_price,
             (SELECT ph.effective_at FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1 OFFSET 1) previous_effective_at
-            ,COALESCE((SELECT pd.discount_percentage FROM plug_discounts pd WHERE pd.spark_plug_id=sp.id AND pd.is_active=1 LIMIT 1),0) commission_percentage
+            ,COALESCE((SELECT pc.commission_percentage FROM plug_commissions pc WHERE pc.spark_plug_id=sp.id AND pc.is_active=1 LIMIT 1),0) commission_percentage
      FROM spark_plugs sp
      WHERE sp.is_active=1 ORDER BY sp.brand_name,sp.plug_number"
 )->fetchAll();
@@ -93,8 +93,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             $priceHistoryIds=is_array($postedProducts['price_history_id']??null)?$postedProducts['price_history_id']:[];
             $vins=is_array($postedProducts['vin_number']??null)?$postedProducts['vin_number']:[];
             if(!$sparkPlugIds)$error='Add at least one product.';
-            $plugStatement=db()->prepare('SELECT id,plug_number,brand_name FROM spark_plugs WHERE id=? AND LOWER(TRIM(brand_name))=LOWER(TRIM(?)) AND is_active=1');
-            $priceCheck=db()->prepare('SELECT COUNT(*) FROM plug_price_history WHERE id=? AND spark_plug_id=?');
+            $plugStatement=db()->prepare("SELECT sp.id,sp.plug_number,sp.brand_name,(SELECT ph.id FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_price_id,(SELECT ph.price FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_price FROM spark_plugs sp WHERE sp.id=? AND LOWER(TRIM(sp.brand_name))=LOWER(TRIM(?)) AND sp.is_active=1");
             foreach($sparkPlugIds as $index=>$postedPlugId){
                 if($error!=='')break;
                 $sparkPlugId=max(0,(int)$postedPlugId);
@@ -108,13 +107,18 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 if(!$plug){$error='Select a valid brand and plug number for product '.($index+1).'.';break;}
                 if($price<=0){$error='Enter a valid price for product '.($index+1).'.';break;}
                 if($quantity<1){$error='Enter a valid quantity for product '.($index+1).'.';break;}
-                if($priceHistoryId){$priceCheck->execute([$priceHistoryId,$sparkPlugId]);if(!(int)$priceCheck->fetchColumn())$priceHistoryId=0;}
-                $discountStatement=db()->prepare('SELECT discount_percentage FROM plug_discounts WHERE spark_plug_id=? AND is_active=1 LIMIT 1');$discountStatement->execute([$sparkPlugId]);$commissionPercentage=$commissionApplies?(float)($discountStatement->fetchColumn()?:0):null;
+                $currentPrice=(float)($plug['current_price']??0);$priceHistoryId=(int)($plug['current_price_id']??0);
+                $isNewCurrentPrice=$currentPrice<=0||$price>$currentPrice;
+                $listUnitPrice=$currentPrice>0?$currentPrice:$price;
+                if($isNewCurrentPrice)$listUnitPrice=$price;
+                $customerDiscountAmount=$currentPrice>0&&$price<$currentPrice?round(($currentPrice-$price)*$quantity,2):0.0;
+                $commissionStatement=db()->prepare('SELECT commission_percentage FROM plug_commissions WHERE spark_plug_id=? AND is_active=1 LIMIT 1');$commissionStatement->execute([$sparkPlugId]);$commissionPercentage=$commissionApplies?(float)($commissionStatement->fetchColumn()?:0):null;
                 $lineTotal=round($price*$quantity,2);
-                $saleProducts[]=['plug'=>$plug,'spark_plug_id'=>$sparkPlugId,'price'=>$lineTotal,'unit_price'=>$price,'quantity'=>$quantity,'price_history_id'=>$priceHistoryId?:null,'vin'=>$vin,'commission_percentage'=>$commissionPercentage,'commission_amount'=>$commissionApplies?round($lineTotal*(float)$commissionPercentage/100,2):null];
+                $saleProducts[]=['plug'=>$plug,'spark_plug_id'=>$sparkPlugId,'price'=>$lineTotal,'unit_price'=>$price,'list_unit_price'=>$listUnitPrice,'customer_discount_amount'=>$customerDiscountAmount,'is_new_current_price'=>$isNewCurrentPrice,'quantity'=>$quantity,'price_history_id'=>$priceHistoryId?:null,'vin'=>$vin,'commission_percentage'=>$commissionPercentage,'commission_amount'=>$commissionApplies?round($lineTotal*(float)$commissionPercentage/100,2):null];
             }
         }
         $saleSubtotal=array_sum(array_column($saleProducts,'price'));
+        $customerDiscountAmount=array_sum(array_column($saleProducts,'customer_discount_amount'));
         if($deliveryCharge>$saleSubtotal)$error='Delivery charges cannot be greater than the sales amount.';
         $netSales=max(0,round($saleSubtotal-$deliveryCharge,2));
         $rawCommission=$commissionApplies?array_sum(array_map(static fn(array $product):float=>(float)($product['commission_amount']??0),$saleProducts)):0;
@@ -160,13 +164,16 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 $saleRef=next_project_reference($isSorSale?'sor_sale':'pos_sale');
                 $saleVendor=current_vendor_profile();$salePersonnel=current_vendor_personnel();
                 $salePersonnelName=$salePersonnel?trim(current_user_name()):'';
-                db()->prepare('INSERT INTO pos_sales(sale_ref,sale_date,sale_source,vendor_id,vendor_name,vendor_personnel_id,vendor_personnel_name,customer_mode,customer_id,customer_name,customer_phone,job_type_id,customer_type,location_id,area,referral_source_id,referral_source,comment,subtotal,sales_type,recipient_vendor_id,recipient_vendor_name,delivery_charge,net_sales,commission_amount,amount_less_commission,status,recorded_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$saleRef,$saleDate,$saleSource,(int)($saleVendor['id']??0)?:null,trim((string)($saleVendor['vendor_name']??''))?:null,(int)($salePersonnel['id']??0)?:null,$salePersonnelName?:null,$customerMode,$customerId,$customerName,$customerPhone,$jobTypeId,$customerType,$locationId,$area,$referralSourceId,$referralName?:null,$comment?:null,$saleSubtotal,$salesType,$recipientVendorId?:null,$recipientVendorName,$deliveryCharge,$netSales,$commissionAmount,$amountLessCommission,'completed',current_user_id()]);
+                $newPriceIds=[];
+                $insertPriceHistory=db()->prepare('INSERT INTO plug_price_history(spark_plug_id,price,effective_at,note,recorded_by_user_id) VALUES(?,?,NOW(),?,?)');
+                foreach($saleProducts as &$saleProduct){if(!$saleProduct['is_new_current_price'])continue;$priceKey=$saleProduct['spark_plug_id'].'|'.number_format((float)$saleProduct['unit_price'],2,'.','');if(!isset($newPriceIds[$priceKey])){$insertPriceHistory->execute([$saleProduct['spark_plug_id'],$saleProduct['unit_price'],'Updated automatically from POS sale '.$saleRef,current_user_id()]);$newPriceIds[$priceKey]=(int)db()->lastInsertId();}$saleProduct['price_history_id']=$newPriceIds[$priceKey];}unset($saleProduct);
+                db()->prepare('INSERT INTO pos_sales(sale_ref,sale_date,sale_source,vendor_id,vendor_name,vendor_personnel_id,vendor_personnel_name,customer_mode,customer_id,customer_name,customer_phone,job_type_id,customer_type,location_id,area,referral_source_id,referral_source,comment,subtotal,customer_discount_amount,sales_type,recipient_vendor_id,recipient_vendor_name,delivery_charge,net_sales,commission_amount,amount_less_commission,status,recorded_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$saleRef,$saleDate,$saleSource,(int)($saleVendor['id']??0)?:null,trim((string)($saleVendor['vendor_name']??''))?:null,(int)($salePersonnel['id']??0)?:null,$salePersonnelName?:null,$customerMode,$customerId,$customerName,$customerPhone,$jobTypeId,$customerType,$locationId,$area,$referralSourceId,$referralName?:null,$comment?:null,$saleSubtotal,$customerDiscountAmount,$salesType,$recipientVendorId?:null,$recipientVendorName,$deliveryCharge,$netSales,$commissionAmount,$amountLessCommission,'completed',current_user_id()]);
                 $saleId=(int)db()->lastInsertId();
-                $insertItem=db()->prepare('INSERT INTO pos_sale_items(sale_id,spark_plug_id,price_history_id,brand_name,plug_number,quantity,unit_price,total_amount,commission_percentage,commission_amount) VALUES(?,?,?,?,?,?,?,?,?,?)');
+                $insertItem=db()->prepare('INSERT INTO pos_sale_items(sale_id,spark_plug_id,price_history_id,brand_name,plug_number,quantity,unit_price,list_unit_price,total_amount,customer_discount_amount,commission_percentage,commission_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
                 $insertVin=db()->prepare('INSERT INTO pos_sale_vins(sale_item_id,vin_number) VALUES(?,?)');
                 foreach($saleProducts as $saleProduct){
                     $plug=$saleProduct['plug'];$lineTotal=(float)$saleProduct['price'];$unitPrice=(float)$saleProduct['unit_price'];
-                    $insertItem->execute([$saleId,$saleProduct['spark_plug_id'],$saleProduct['price_history_id'],$plug['brand_name'],$plug['plug_number'],$saleProduct['quantity'],$unitPrice,$lineTotal,$saleProduct['commission_percentage'],$saleProduct['commission_amount']]);
+                    $insertItem->execute([$saleId,$saleProduct['spark_plug_id'],$saleProduct['price_history_id'],$plug['brand_name'],$plug['plug_number'],$saleProduct['quantity'],$unitPrice,$saleProduct['list_unit_price'],$lineTotal,$saleProduct['customer_discount_amount'],$saleProduct['commission_percentage'],$saleProduct['commission_amount']]);
                     if($saleProduct['vin']!=='')$insertVin->execute([(int)db()->lastInsertId(),$saleProduct['vin']]);
                 }
                 db()->commit();
@@ -198,7 +205,7 @@ require_once __DIR__ . '/../includes/header.php';
     <?php if($activeDayClosure):?><div class="profile-message is-error"><strong>Sales Closed</strong> at <?=e(date('H:i',strtotime((string)$activeDayClosure['closed_at'])))?>. Reports and receipts remain available.</div><?php else:?><form class="pos-sales-form pos-sales-form--sectioned" method="post" autocomplete="off" novalidate><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="sale_source" value="<?=e($saleSource)?>">
         <div class="pos-customer-mode" role="group" aria-label="Customer mode"><input type="hidden" name="customer_mode" value="registered" data-pos-customer-mode><button class="is-active" type="button" data-pos-customer-mode-button="registered">Registered</button><button type="button" data-pos-customer-mode-button="temp">Temp</button></div>
         <div class="profile-message is-error pos-sales-validation-message" data-pos-validation-message role="alert" hidden></div>
-        <nav class="pos-sales-section-menu" aria-label="Sales entry sections"><button type="button" class="is-active" data-pos-section-button="date"><i class="fa-solid fa-calendar-day"></i><span>Date</span></button><button type="button" data-pos-section-button="customer"><i class="fa-solid fa-user"></i><span>Customer</span></button><button type="button" data-pos-section-button="customer-type" data-pos-temp-only hidden><i class="fa-solid fa-id-badge"></i><span>Customer Type</span></button><button type="button" data-pos-section-button="sales-type"><i class="fa-solid fa-right-left"></i><span>Sale Type</span></button><button type="button" data-pos-section-button="delivery"><i class="fa-solid fa-truck"></i><span>Delivery Charges</span></button><button type="button" data-pos-section-button="product"><i class="fa-solid fa-box"></i><span>Product</span></button><button type="button" data-pos-section-button="referral" data-pos-temp-only hidden><i class="fa-solid fa-bullhorn"></i><span>How Did You Know Us?</span></button><button type="button" data-pos-section-button="comment"><i class="fa-solid fa-note-sticky"></i><span>Comment</span></button></nav>
+        <nav class="pos-sales-section-menu" aria-label="Sales entry sections"><button type="button" class="is-active" data-pos-section-button="date"><i class="fa-solid fa-calendar-day"></i><span>Date</span></button><button type="button" data-pos-section-button="customer"><i class="fa-solid fa-user"></i><span>Customer</span></button><button type="button" data-pos-section-button="customer-type" data-pos-temp-only hidden><i class="fa-solid fa-id-badge"></i><span>Customer Type</span></button><button type="button" data-pos-section-button="sales-type"><i class="fa-solid fa-right-left"></i><span>Sale Type</span></button><button type="button" data-pos-section-button="product"><i class="fa-solid fa-box"></i><span>Product</span></button><button type="button" data-pos-section-button="delivery"><i class="fa-solid fa-truck"></i><span>Delivery Charges</span></button><button type="button" data-pos-section-button="referral" data-pos-temp-only hidden><i class="fa-solid fa-bullhorn"></i><span>How Did You Know Us?</span></button><button type="button" data-pos-section-button="comment"><i class="fa-solid fa-note-sticky"></i><span>Comment</span></button></nav>
         <details class="pos-sales-field is-active-section" data-pos-section="date" open>
             <summary><strong>Date</strong><span><?=e(date('d/m/Y'))?></span><i class="fa-solid fa-caret-down"></i></summary>
             <div class="pos-sales-field__body"><label for="pos_sale_date">Sale date <span class="required-asterisk" aria-hidden="true">*</span></label><input id="pos_sale_date" name="sale_date" type="date" value="<?=e(date('Y-m-d'))?>" required></div>
@@ -206,12 +213,7 @@ require_once __DIR__ . '/../includes/header.php';
 
         <details class="pos-sales-field" data-pos-section="sales-type" open>
             <summary><strong>Sales Type</strong><span data-pos-sales-type-summary>Direct</span><i class="fa-solid fa-caret-down"></i></summary>
-<div class="pos-sales-field__body"><label for="pos_sales_type">Sales type <span class="required-asterisk" aria-hidden="true">*</span></label><select id="pos_sales_type" name="sales_type" required><option value="direct">Direct</option><option value="indirect">Indirect</option></select><div data-pos-recipient-vendor hidden><label for="pos_recipient_vendor">Recipient / Referring vendor <span class="required-asterisk" aria-hidden="true">*</span></label><select id="pos_recipient_vendor" name="recipient_vendor_id" data-vendor-selector data-popup-select data-popup-search data-popup-hide-empty><option value="">Search or select vendor</option><?php foreach($vendors as $vendor):?><option value="<?=(int)$vendor['id']?>"><?=e(implode(' · ',array_filter([(string)$vendor['vendor_name'],(string)($vendor['phone']??'')])))?></option><?php endforeach;?></select></div></div>
-        </details>
-
-        <details class="pos-sales-field" data-pos-section="delivery" open>
-            <summary><strong>Delivery Charges</strong><span>GHS 0.00</span><i class="fa-solid fa-caret-down"></i></summary>
-            <div class="pos-sales-field__body"><label for="pos_delivery_charge">Delivery charges</label><input id="pos_delivery_charge" name="delivery_charge" type="number" min="0" step="0.01" value="0.00"></div>
+<div class="pos-sales-field__body"><label for="pos_sales_type">Sales type <span class="required-asterisk" aria-hidden="true">*</span></label><select id="pos_sales_type" name="sales_type" data-popup-select data-popup-search required><option value="direct">Direct</option><option value="indirect">Indirect</option></select><div data-pos-recipient-vendor hidden><label for="pos_recipient_vendor">Recipient / Referring vendor <span class="required-asterisk" aria-hidden="true">*</span></label><select id="pos_recipient_vendor" name="recipient_vendor_id" data-vendor-selector data-popup-select data-popup-search data-popup-hide-empty><option value="">Search or select vendor</option><?php foreach($vendors as $vendor):?><option value="<?=(int)$vendor['id']?>"><?=e(implode(' · ',array_filter([(string)$vendor['vendor_name'],(string)($vendor['phone']??'')])))?></option><?php endforeach;?></select></div></div>
         </details>
 
         <details class="pos-sales-field" data-pos-section="customer" data-pos-registered-field open>
@@ -231,18 +233,23 @@ require_once __DIR__ . '/../includes/header.php';
 
         <details class="pos-sales-field" data-pos-section="customer" data-pos-temp-field hidden open>
             <summary><strong>Location</strong><span>Select</span><i class="fa-solid fa-caret-down"></i></summary>
-            <div class="pos-sales-field__body pos-temp-location-fields"><div><label for="pos_temp_region">Region</label><select id="pos_temp_region" data-location-region-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select region</option><?php foreach($locationRegions as $regionKey=>$regionName):?><option value="<?=e((string)$regionKey)?>"><?=e($regionName)?></option><?php endforeach;?></select></div><div><label for="pos_temp_town">Town</label><select id="pos_temp_town" name="temp_location_id" data-location-town-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select town</option><?php foreach($locations as $location):?><option value="<?=(int)$location['id']?>" data-region-key="<?=e((string)($location['region_code']?:$location['region_name']))?>" data-mmda-name="<?=e((string)$location['mmda_name'])?>"><?=e((string)$location['town_name'])?><?= (int)$location['is_capital']===1?' *':'' ?></option><?php endforeach;?></select></div><div><label for="pos_temp_area">Area</label><input id="pos_temp_area" name="temp_area" placeholder="Enter area" data-required-when-temp disabled></div></div>
+            <div class="pos-sales-field__body pos-temp-location-fields"><div><label for="pos_temp_region">Region</label><select id="pos_temp_region" data-location-region-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select region</option><?php foreach($locationRegions as $regionKey=>$regionName):?><option value="<?=e((string)$regionKey)?>"><?=e($regionName)?></option><?php endforeach;?></select></div><div><label for="pos_temp_town">Town</label><select id="pos_temp_town" name="temp_location_id" data-location-town-select data-popup-select data-popup-search data-popup-hide-empty data-required-when-temp disabled><option value="">Select town</option><option value="__other__" data-add-town-option="true">Other — add a new town</option><?php foreach($locations as $location):?><option value="<?=(int)$location['id']?>" data-region-key="<?=e((string)($location['region_code']?:$location['region_name']))?>" data-mmda-name="<?=e((string)$location['mmda_name'])?>"><?=e((string)$location['town_name'])?><?= (int)$location['is_capital']===1?' *':'' ?></option><?php endforeach;?></select></div><div><label for="pos_temp_area">Area</label><input id="pos_temp_area" name="temp_area" placeholder="Enter area" data-required-when-temp disabled></div></div>
         </details>
 
         <details class="pos-sales-field pos-sales-derived-field" data-pos-section="customer-type" data-pos-customer-type-field data-pos-temp-only hidden open>
             <summary><strong>Customer Type</strong><span data-pos-customer-type-summary>Not available</span><i class="fa-solid fa-caret-down"></i></summary>
-            <div class="pos-sales-field__body"><span class="pos-sales-derived-value" data-pos-customer-type-value>Not available</span><label for="pos_customer_type">Customer type</label><select id="pos_customer_type" name="job_type_id" data-pos-customer-type-input data-required-when-temp data-popup-select data-popup-search data-popup-hide-empty disabled><option value="">Select customer type</option><?php foreach($jobTypes as $jobType):?><option value="<?=(int)$jobType['id']?>"><?=e((string)$jobType['job_type_name'])?></option><?php endforeach;?></select><small>Choices are managed in Customer Type Setup.</small></div>
+            <div class="pos-sales-field__body"><span class="pos-sales-derived-value" data-pos-customer-type-value>Not available</span><label for="pos_customer_type">Customer type</label><select id="pos_customer_type" name="job_type_id" data-pos-customer-type-input data-required-when-temp data-popup-select data-popup-search data-popup-hide-empty disabled><option value="">Select customer type</option><?php foreach($jobTypes as $jobType):?><option value="<?=(int)$jobType['id']?>"><?=e((string)$jobType['job_type_name'])?></option><?php endforeach;?></select></div>
         </details>
 
         <section class="pos-sale-products" data-pos-section="product" aria-labelledby="pos-sale-products-title">
             <div class="pos-sale-products__heading"><div><span class="section-kicker">Products</span><strong id="pos-sale-products-title" data-pos-product-count>1 product</strong></div><button class="secondary-button pos-sale-product-add" type="button" data-pos-product-add><i class="fa-solid fa-plus"></i><span>Add Product</span></button></div>
             <div class="pos-sale-product-list" data-pos-product-list></div>
         </section>
+
+        <details class="pos-sales-field" data-pos-section="delivery" open>
+            <summary><strong>Delivery Charges</strong><span>GHS 0.00</span><i class="fa-solid fa-caret-down"></i></summary>
+            <div class="pos-sales-field__body"><label for="pos_delivery_charge">Delivery charges</label><input id="pos_delivery_charge" name="delivery_charge" type="number" min="0" step="0.01" value="0.00"></div>
+        </details>
 
         <template data-pos-product-template>
             <article class="pos-transfer-product pos-sale-product" data-pos-product>
@@ -251,7 +258,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <label class="pos-transfer-field pos-transfer-field--wide"><span>Brand</span><select name="products[brand_name][]" data-pos-product-brand data-popup-select data-popup-search data-popup-hide-empty required><option value="">Search or select brand</option><?php foreach($plugBrands as $brand):?><option value="<?=e((string)$brand['brand_name'])?>"><?=e((string)$brand['brand_name'])?></option><?php endforeach;?></select></label>
                     <label class="pos-transfer-field pos-transfer-field--wide"><span>Plug number</span><select name="products[spark_plug_id][]" data-pos-product-plug data-popup-select data-popup-search data-popup-hide-empty data-popup-empty-text="No plug numbers are available for the selected brand." required><option value="">Search or select plug number</option><?php foreach($sparkPlugs as $plug):?><option value="<?=(int)$plug['id']?>" data-brand-name="<?=e(strtolower(trim((string)$plug['brand_name'])))?>" data-current-price="<?=e((string)($plug['current_price']??''))?>" data-current-effective="<?=e((string)($plug['current_effective_at']??''))?>" data-previous-price="<?=e((string)($plug['previous_price']??''))?>" data-previous-effective="<?=e((string)($plug['previous_effective_at']??''))?>" data-price-history-id="<?=e((string)($plug['current_price_id']??''))?>" hidden disabled><?=e((string)$plug['plug_number'])?></option><?php endforeach;?></select></label>
                     <label class="pos-transfer-field"><span>Price</span><input name="products[price][]" type="number" min="0" step="0.01" placeholder="0.00" data-pos-product-price required><input type="hidden" name="products[price_history_id][]" data-pos-product-price-history></label>
-                    <label class="pos-transfer-field"><span>Quantity</span><input name="products[quantity][]" type="number" min="1" step="1" value="1" data-pos-product-quantity required></label>
+                    <label class="pos-transfer-field"><span>Quantity</span><input name="products[quantity][]" type="number" min="1" step="1" value="4" data-pos-product-quantity required></label>
                     <label class="pos-transfer-field"><span>VIN number</span><input name="products[vin_number][]" maxlength="17" placeholder="Enter VIN number" data-pos-product-vin></label>
                     <small class="pos-price-history pos-sale-product__history" data-pos-product-history>No price history available.</small>
                 </div>
@@ -260,7 +267,7 @@ require_once __DIR__ . '/../includes/header.php';
 
         <details class="pos-sales-field" data-pos-section="referral" data-pos-temp-only hidden open>
             <summary><strong>How Did You Know Us?</strong><span>Select</span><i class="fa-solid fa-caret-down"></i></summary>
-            <div class="pos-sales-field__body"><label for="pos_referral">Referral source</label><div class="pos-sales-combobox"><i class="fa-solid fa-magnifying-glass"></i><input id="pos_referral" name="referral_source" list="pos_referrals" placeholder="Type or select referral source" data-pos-auto-picker><i class="fa-solid fa-chevron-down"></i></div><datalist id="pos_referrals"><?php foreach($referralSources as $source):?><option value="<?=e((string)$source['source_name'])?>"><?php endforeach;?></datalist></div>
+            <div class="pos-sales-field__body"><label for="pos_referral">Referral source</label><select id="pos_referral" name="referral_source" data-popup-select data-popup-search data-popup-hide-empty data-pos-auto-picker><option value="">Search or select referral source</option><?php foreach($referralSources as $source):?><option value="<?=e((string)$source['source_name'])?>"><?=e((string)$source['source_name'])?></option><?php endforeach;?></select></div>
         </details>
 
         <details class="pos-sales-field" data-pos-section="comment" open>
@@ -272,7 +279,7 @@ require_once __DIR__ . '/../includes/header.php';
             <div class="pos-sales-live-receipt__head"><div><span class="section-kicker">Live receipt</span><strong id="pos-live-receipt-title">Sale total</strong></div><strong data-pos-live-total>GHS 0.00</strong></div>
             <div class="pos-sales-live-receipt__customer"><span>Bill to</span><strong data-pos-live-customer>Customer not selected</strong></div>
             <div class="pos-sales-live-receipt__table"><table><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody data-pos-live-items><tr><td colspan="4">Add a product to build the receipt.</td></tr></tbody></table></div>
-            <dl class="pos-sales-live-receipt__totals"><div><dt>Sales</dt><dd data-pos-live-subtotal>GHS 0.00</dd></div><div><dt>Delivery charges</dt><dd data-pos-live-delivery>GHS 0.00</dd></div><div class="is-net"><dt>Net sales</dt><dd data-pos-live-net>GHS 0.00</dd></div></dl>
+            <dl class="pos-sales-live-receipt__totals"><div><dt>Sales</dt><dd data-pos-live-subtotal>GHS 0.00</dd></div><div data-pos-live-discount-row hidden><dt>Customer discount</dt><dd data-pos-live-discount>− GHS 0.00</dd></div><div><dt>Delivery charges</dt><dd data-pos-live-delivery>GHS 0.00</dd></div><div class="is-net"><dt>Net sales</dt><dd data-pos-live-net>GHS 0.00</dd></div></dl>
         </aside>
 
         <div class="form-actions pos-sales-actions"><a class="secondary-button" href="<?=e($internalBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a><button class="login-button" type="submit"><i class="fa-solid fa-floppy-disk"></i><span>Save Sale</span></button></div>
@@ -382,6 +389,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const productCount = document.querySelector('[data-pos-product-count]');
     const liveItems = document.querySelector('[data-pos-live-items]');
     const liveSubtotal = document.querySelector('[data-pos-live-subtotal]');
+    const liveDiscount = document.querySelector('[data-pos-live-discount]');
+    const liveDiscountRow = document.querySelector('[data-pos-live-discount-row]');
     const liveDelivery = document.querySelector('[data-pos-live-delivery]');
     const liveNet = document.querySelector('[data-pos-live-net]');
     const liveTotal = document.querySelector('[data-pos-live-total]');
@@ -389,14 +398,16 @@ document.addEventListener('DOMContentLoaded', function () {
     const deliveryInput = document.querySelector('#pos_delivery_charge');
     const money = (value) => 'GHS ' + formatPrice(Math.max(0, Number(value) || 0));
     const updateLiveReceipt = function (products) {
-        let subtotal=0;
+        let subtotal=0,discountTotal=0;
         const rows=products.map(function(product){
             const brand=product.querySelector('[data-pos-product-brand]')?.value.trim()||'';
             const plugSelect=product.querySelector('[data-pos-product-plug]');
             const plug=plugSelect?.value?(plugSelect.selectedOptions[0]?.textContent.trim()||''):'';
-            const quantity=Math.max(1,Number(product.querySelector('[data-pos-product-quantity]')?.value||1));
+            const quantity=Math.max(1,Number(product.querySelector('[data-pos-product-quantity]')?.value||4));
             const unitPrice=Math.max(0,Number(product.querySelector('[data-pos-product-price]')?.value||0));
+            const currentPrice=Math.max(0,Number(plugSelect?.selectedOptions[0]?.dataset.currentPrice||0));
             const amount=quantity*unitPrice;subtotal+=amount;
+            discountTotal+=currentPrice>unitPrice?quantity*(currentPrice-unitPrice):0;
             if(!brand&&!plug&&unitPrice<=0)return '';
             const row=document.createElement('tr');
             [([brand,plug].filter(Boolean).join(' ')||'Product'),String(quantity),money(unitPrice),money(amount)].forEach(function(value){const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);});
@@ -406,6 +417,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const net=Math.max(0,subtotal-delivery);
         if(liveItems)liveItems.innerHTML=rows.join('')||'<tr><td colspan="4">Add a product to build the receipt.</td></tr>';
         if(liveSubtotal)liveSubtotal.textContent=money(subtotal);
+        if(liveDiscount)liveDiscount.textContent='− '+money(discountTotal);
+        if(liveDiscountRow)liveDiscountRow.hidden=discountTotal<=0;
         if(liveDelivery)liveDelivery.textContent=money(delivery);
         if(liveNet)liveNet.textContent=money(net);
         if(liveTotal)liveTotal.textContent=money(net);
@@ -420,7 +433,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const brandSelect = product.querySelector('[data-pos-product-brand]');
             const plugSelect = product.querySelector('[data-pos-product-plug]');
             const price = Number(product.querySelector('[data-pos-product-price]')?.value || 0);
-            const quantity = Math.max(1,Number(product.querySelector('[data-pos-product-quantity]')?.value || 1));
+            const quantity = Math.max(1,Number(product.querySelector('[data-pos-product-quantity]')?.value || 4));
             const brand = brandSelect?.value ? brandSelect.selectedOptions[0]?.textContent.trim() || '' : '';
             const plug = plugSelect?.value ? plugSelect.selectedOptions[0]?.textContent.trim() || '' : '';
             const summary = product.querySelector('[data-pos-product-summary]');

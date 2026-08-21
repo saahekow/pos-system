@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/config/app.php';
-require_module_access('create_customer');
+require_module_access(current_user_role() === 'vendor' ? 'vendor_customers' : 'create_customer');
 ensure_places_management_schema();
 ensure_addendum_schema();
 $_SESSION['normalized_customer_workflow'] = 'create_customer';

@@ -35,8 +35,10 @@ ensure_location_schema();
 $regionStatement = db()->prepare(
     "SELECT region_code,region_name
      FROM locations
-     WHERE entry_type='region' AND is_active=1
+     WHERE is_active=1
+       AND region_name IS NOT NULL AND TRIM(region_name)<>''
        AND (CAST(region_code AS CHAR)=? OR region_name=?)
+     ORDER BY CASE WHEN entry_type='region' THEN 0 ELSE 1 END,id
      LIMIT 1"
 );
 $regionStatement->execute([$regionKey, $regionKey]);
@@ -51,7 +53,7 @@ $existingStatement = db()->prepare(
        AND LOWER(TRIM(town_name))=LOWER(TRIM(?))
      LIMIT 1"
 );
-$existingStatement->execute([(int)$region['region_code'], $townName]);
+$existingStatement->execute([(string)$region['region_code'], $townName]);
 $existing = $existingStatement->fetch();
 
 if ($existing) {
@@ -63,7 +65,7 @@ if ($existing) {
         "INSERT INTO locations(entry_type,region_code,region_name,mmda_code,mmda_name,town_name,is_capital,is_active)
          VALUES('town',?,?,NULL,NULL,?,0,1)"
     );
-    $insert->execute([(int)$region['region_code'], (string)$region['region_name'], $townName]);
+    $insert->execute([(string)$region['region_code'], (string)$region['region_name'], $townName]);
     $locationId = (int)db()->lastInsertId();
 }
 

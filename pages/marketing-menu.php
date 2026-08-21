@@ -4,8 +4,9 @@ require_auth();
 
 $canTrip = can_access_menu_item('marketing_trip_registration')||can_access_menu_item('marketing_location_registration')||can_access_menu_item('marketing_customer')||can_access_menu_item('marketing_sales')||can_access_menu_item('marketing_promo_plug');
 $canReports = can_access_module('customer_followup')||can_access_menu_item('marketing_report_trip')||can_access_menu_item('marketing_report_location')||can_access_menu_item('marketing_report_customer')||can_access_menu_item('marketing_report_notes')||can_access_menu_item('marketing_report_promo')||can_access_menu_item('marketing_report_vendors');
-$canMarketingAdmin = can_access_module('admin') || can_access_module('create_customer') || can_access_module('vendor_customers');
-if (!$canTrip && !$canReports && !$canMarketingAdmin) {
+$canAddendumRegistration = can_access_module('vendor_customers');
+$canMarketingAdmin = can_access_module('admin') || can_access_module('create_customer');
+if (!$canTrip && !$canReports && !$canAddendumRegistration && !$canMarketingAdmin) {
     header('Location: ' . app_url('index.php'));
     exit;
 }
@@ -32,6 +33,7 @@ require_once __DIR__ . '/../includes/header.php';
 $cards = [];
 if ($view === 'menu') {
     if ($canTrip) $cards[]=['title'=>'Trip','description'=>'Trip registration, locations, customers, sales, and promotional plugs.','icon'=>'fa-solid fa-route','url'=>app_url('marketing.php?view=trip')];
+    if ($canAddendumRegistration) $cards[]=['title'=>'Addendum Registration','description'=>'Register a location and add customers without starting a marketing trip.','icon'=>'fa-solid fa-user-plus','url'=>app_url('admin-customers.php?return_to='.rawurlencode(app_url('marketing.php')))];
     if ($canReports) $cards[]=['title'=>'Reports','description'=>'Review trip, location, customer, notes, and promotional activity.','icon'=>'fa-solid fa-chart-column','url'=>app_url('marketing.php?view=reports')];
     if ($canMarketingAdmin) $cards[]=['title'=>'Admin','description'=>'Open marketing setup and assignment tools.','icon'=>'fa-solid fa-gears','url'=>app_url('marketing.php?view=admin')];
 } elseif ($view === 'trip') {

@@ -22,18 +22,25 @@ $menuGroups = [
         'url' => app_url('pos.php'),
         'module_keys' => ['pos'],
     ],
+    'customer_followup' => [
+        'title' => 'Customer Follow-up',
+        'description' => 'Find an accessible customer and record a phone or physical follow-up.',
+        'icon' => 'fa-solid fa-clipboard-check',
+        'url' => app_url('followup.php'),
+        'module_keys' => ['customer_followup'],
+    ],
     'admin' => [
         'title' => 'Admin',
-        'description' => 'Open attendance, customer follow-up, vehicle log, administration, and reports.',
+        'description' => 'Open attendance, vehicle log, administration, and reports.',
         'icon' => 'fa-solid fa-user-gear',
         'url' => app_url('admin.php'),
-        'module_keys' => ['attendance', 'customer_followup', 'vehicle_log', 'admin'],
+        'module_keys' => ['attendance', 'vehicle_log', 'admin'],
     ],
 ];
 $visibleMenuGroups = array_filter($menuGroups, static function (array $group, string $key) use ($modules): bool {
     if($key==='marketing')return can_access_menu_item('marketing_trip_registration')||can_access_menu_item('marketing_location_registration')||can_access_menu_item('marketing_customer')||can_access_menu_item('marketing_sales')||can_access_menu_item('marketing_promo_plug')||can_access_menu_item('marketing_report_trip')||can_access_menu_item('marketing_report_location')||can_access_menu_item('marketing_report_customer')||can_access_menu_item('marketing_report_notes')||can_access_menu_item('marketing_report_promo')||can_access_menu_item('marketing_report_vendors')||can_access_module('admin')||can_access_module('vendor_customers');
     if($key==='pos')return can_access_menu_item('pos_shop_sales')||can_access_menu_item('pos_trip_sales')||can_access_menu_item('pos_promo')||can_access_menu_item('pos_transfer')||can_access_menu_item('pos_refund')||can_access_menu_item('pos_audit')||can_access_menu_item('pos_reports')||is_admin_user();
-    if($key==='admin')return can_access_module('attendance')||can_access_module('sales_trip')||can_access_module('customer_followup')||can_access_menu_item('admin_vehicle_log')||can_access_menu_item('admin_reports')||can_access_module('admin');
+    if($key==='admin')return can_access_module('attendance')||can_access_menu_item('admin_vehicle_log')||can_access_menu_item('admin_reports')||can_access_module('admin');
     return (bool)array_intersect(array_keys($modules),$group['module_keys']);
 },ARRAY_FILTER_USE_BOTH);
 $groupedModuleKeys = [];

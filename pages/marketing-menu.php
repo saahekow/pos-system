@@ -3,7 +3,7 @@ require_once __DIR__ . '/../config/app.php';
 require_auth();
 
 $canTrip = can_access_menu_item('marketing_trip_registration')||can_access_menu_item('marketing_location_registration')||can_access_menu_item('marketing_customer')||can_access_menu_item('marketing_sales')||can_access_menu_item('marketing_promo_plug');
-$canReports = can_access_menu_item('marketing_report_trip')||can_access_menu_item('marketing_report_location')||can_access_menu_item('marketing_report_customer')||can_access_menu_item('marketing_report_notes')||can_access_menu_item('marketing_report_promo')||can_access_menu_item('marketing_report_vendors');
+$canReports = can_access_module('customer_followup')||can_access_menu_item('marketing_report_trip')||can_access_menu_item('marketing_report_location')||can_access_menu_item('marketing_report_customer')||can_access_menu_item('marketing_report_notes')||can_access_menu_item('marketing_report_promo')||can_access_menu_item('marketing_report_vendors');
 $canMarketingAdmin = can_access_module('admin') || can_access_module('create_customer') || can_access_module('vendor_customers');
 if (!$canTrip && !$canReports && !$canMarketingAdmin) {
     header('Location: ' . app_url('index.php'));
@@ -58,6 +58,9 @@ if ($view === 'menu') {
             default=>app_url($reportUrl),
         };
         $cards[]=['title'=>$title,'description'=>'Open the available '.strtolower($title).' records and reporting tools.','icon'=>$icon,'url'=>$url];
+    }
+    if (can_access_module('customer_followup')) {
+        $cards[]=['title'=>'Follow-up Reports','description'=>'Review customer phone-call and physical-visit follow-ups.','icon'=>'fa-solid fa-clipboard-check','url'=>app_url('reports.php?report=followup&return_to='.rawurlencode(app_url('marketing.php?view=reports')))];
     }
 } elseif ($view === 'admin') {
     $cards[]=['title'=>'Setup','description'=>'Manage locations, vendors, customers, and related marketing setup.','icon'=>'fa-solid fa-sliders','url'=>app_url('marketing.php?view=setup')];

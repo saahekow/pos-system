@@ -12,7 +12,7 @@ $message=$error='';
 $vendorId=max(0,(int)($_GET['vendor_id']??$_POST['vendor_id']??0));
 $vendorModules=array_intersect_key(application_modules(),array_flip(vendor_assignable_module_keys()));
 $vendorModules['customer_visit']['title']='Marketing — Trip';$vendorModules['customer_visit']['description']='Open location, customer, sales, and Promo Plug workflows under Marketing Trip.';
-$vendorModules['customer_followup']['title']='Customer Follow-up';$vendorModules['customer_followup']['description']='Keep Customer Follow-up as a direct Home menu until it is placed.';
+$vendorModules['customer_followup']['title']='Customer Follow-up';$vendorModules['customer_followup']['description']='Open Customer Follow-up directly from Home. This remains enabled by default.';
 $vendorModules['vendor_customers']['title']='Marketing — Customer Setup';$vendorModules['vendor_customers']['description']='Create customers from the Marketing administration flow.';
 $vendorModules['vendor_reports']['title']='Marketing — Reports';$vendorModules['vendor_reports']['description']='Open Marketing customer reports. This remains enabled by default.';
 $vendorModules['pos']['description']='Open the new POS menu and permitted POS workflows.';
@@ -24,7 +24,7 @@ $vendorModuleGroups=[
  ['title'=>'Data Management','items'=>array_intersect_key($vendorModules,array_flip(['vin_search']))],
  ['title'=>'Unassigned Home Menus','items'=>array_intersect_key($vendorModules,array_flip(['customer_followup','registration_records']))],
 ];
-$defaultModules=['registration_records','vendor_reports'];
+$defaultModules=['customer_followup','registration_records','vendor_reports'];
 
 if($_SERVER['REQUEST_METHOD']==='POST'){
     $moduleKeys=array_values(array_unique(array_merge($defaultModules,array_intersect(array_keys($vendorModules),array_map('strval',(array)($_POST['module_keys']??[]))))));

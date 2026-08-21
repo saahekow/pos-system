@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
 ensure_customer_promo_plug_schema();
-require_module_access('reports');
+$requestedReportSection = (string) ($_GET['report'] ?? '');
+require_module_access($requestedReportSection === 'followup' ? 'customer_followup' : 'reports');
 ensure_destination_visit_schema();
 ensure_places_management_schema();
 
@@ -84,6 +85,16 @@ if ($reportSection === 'visit-summary') {
     }
 }
 if (($selectedDestination || $allDestinations) && $mode !== '') {
+    $reportUserId = (int)(current_user_id() ?? 0);
+    $reportStaffId = (int)(current_staff_id() ?? 0);
+    $reportVendor = current_vendor_profile();
+    $reportVendorId = (int)($reportVendor['id'] ?? 0);
+    $reportSharedTripAccess = false;
+    if ($reportStaffId) {
+        $sharedTripStatement=db()->prepare("SELECT COUNT(*) FROM sales_trips st INNER JOIN sales_trip_staff_assignments stsa ON stsa.sales_trip_id=st.id WHERE st.status='in_progress' AND stsa.staff_id=?");
+        $sharedTripStatement->execute([$reportStaffId]);
+        $reportSharedTripAccess=(int)$sharedTripStatement->fetchColumn()>0;
+    }
     $sql = "SELECT v.id,v.visit_ref,v.customer_id,p.destination_id,p.business_name AS company_name,c.customer_name AS owner_name,
                    c.phone,c.other_phone,p.area,p.location_id,v.visit_type,v.follow_up_method,v.follow_up_at,
                    cs.sales_ref,cs.sale_confirmed,
@@ -101,6 +112,13 @@ if (($selectedDestination || $allDestinations) && $mode !== '') {
     $params = [];
     if ($reportSection === 'followup') $sql .= " AND v.visit_type='follow_up'"; else $sql .= " AND v.visit_type='registration'";
     if (!$allDestinations) {$sql .= ' AND p.destination_id=?'; $params[]=$destinationId;}
+    if ($reportSection === 'followup' && $reportVendorId) {
+        $sql .= ' AND v.vendor_id=?';
+        $params[]=$reportVendorId;
+    } elseif ($reportSection === 'followup' && !in_array(current_user_role(), ['super_admin','admin'], true) && !$reportSharedTripAccess) {
+        $sql .= ' AND (v.recorded_by_user_id=? OR v.staff_id=?)';
+        array_push($params,$reportUserId,$reportStaffId);
+    }
     $sql .= ' ORDER BY COALESCE(v.follow_up_at,v.created_at) DESC,v.id DESC';
     $statement = db()->prepare($sql);
     $statement->execute($params);
@@ -109,6 +127,8 @@ if (($selectedDestination || $allDestinations) && $mode !== '') {
     $legacyParams=[];
     if($reportSection==='followup')$legacySql.=" AND dv.visit_type='follow_up'";else $legacySql.=" AND dv.visit_type='registration'";
     if(!$allDestinations){$legacySql.=' AND dv.destination_id=?';$legacyParams[]=$destinationId;}
+    if($reportSection==='followup'&&$reportVendorId){$legacySql.=' AND dv.vendor_id=?';$legacyParams[]=$reportVendorId;
+    }elseif($reportSection==='followup'&&!in_array(current_user_role(),['super_admin','admin'],true)&&!$reportSharedTripAccess){$legacySql.=' AND (dv.recorded_by_user_id=? OR dv.staff_id=?)';array_push($legacyParams,$reportUserId,$reportStaffId);}
     $legacyStatement=db()->prepare($legacySql.' ORDER BY COALESCE(dv.follow_up_at,dv.created_at) DESC,dv.id DESC');$legacyStatement->execute($legacyParams);
     $rows=array_merge($rows,$legacyStatement->fetchAll());
     usort($rows,static fn(array $a,array $b):int=>strcmp((string)($b['follow_up_at']?:$b['created_at']),(string)($a['follow_up_at']?:$a['created_at'])));
@@ -220,7 +240,7 @@ require_once __DIR__ . '/../includes/header.php';
         <label class="report-search-field" for="report_search"><i class="fa-solid fa-magnifying-glass"></i><input id="report_search" type="search" placeholder="Type trip code or sales reference..." autocomplete="off" data-report-search></label>
         <?php else: ?>
         <div class="report-filter-panel">
-            <div class="form-field"><label for="report_region">Region</label><select id="report_region" data-location-region-select><option value="">All regions</option><?php foreach($locationRegions as $regionKey=>$regionName):?><option value="<?=e($regionKey)?>"><?=e($regionName)?></option><?php endforeach;?></select></div>
+            <div class="form-field"><label for="report_region">Region</label><select id="report_region" data-location-region-select data-popup-select data-popup-search><option value="">All regions</option><?php foreach($locationRegions as $regionKey=>$regionName):?><option value="<?=e($regionKey)?>"><?=e($regionName)?></option><?php endforeach;?></select></div>
             <div class="form-field"><label for="location_id">Town</label><select id="location_id" name="location_id" data-location-town-select data-report-lookup><option value="">All towns</option><?php foreach($towns as $town):?><option value="<?=(int)$town['id']?>" data-region-key="<?=e((string)($town['region_code']?:$town['region_name']))?>" data-mmda-name="<?=e((string)$town['mmda_name'])?>"><?=e((string)$town['town_name'])?><?= (int)$town['is_capital']===1?' *':'' ?></option><?php endforeach;?></select><small data-location-mmda-output></small></div>
             <div class="form-field report-date-field"><label for="date_from">Date From</label><input id="date_from" name="date_from" type="date" data-report-date-filter></div>
             <div class="form-field report-date-field"><label for="date_to">Date To</label><input id="date_to" name="date_to" type="date" data-report-date-filter></div>

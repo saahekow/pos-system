@@ -1,0 +1,13 @@
+Options -Indexes
+
+<IfModule php_module>
+    php_value upload_max_filesize 50M
+    php_value post_max_size 220M
+    php_value max_input_time 180
+    php_value max_execution_time 180
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(?:config|includes|pages)/ - [F,L,NC]
+</IfModule>

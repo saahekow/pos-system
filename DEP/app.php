@@ -2189,7 +2189,7 @@ function assigned_module_keys_for_vendor(int $vendorId): array
     $statement->execute([$vendorId]);
 
     return array_values(array_unique(array_merge(
-        ['customer_followup', 'vendor_reports', 'vendor_personnel'],
+        ['vendor_reports', 'vendor_personnel'],
         array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN))
     )));
 }
@@ -2363,10 +2363,6 @@ function can_access_module(string $moduleKey): bool
     }
     if ($moduleKey === 'registration_records') {
         return current_user_id() !== null;
-    }
-
-    if (current_user_role() === 'staff' && $moduleKey === 'customer_followup') {
-        return current_staff_id() !== null;
     }
 
     if (current_user_role() === 'vendor' && $moduleKey === 'customer_visit') {

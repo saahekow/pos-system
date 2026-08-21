@@ -1,13 +1,13 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
 ensure_customer_promo_plug_schema();
-require_module_access(current_user_role()==='vendor' ? 'customer_followup' : 'sales_trip');
+require_module_access('customer_followup');
 ensure_destination_visit_schema();
 ensure_sales_trip_assignment_schema();
 
 $pageTitle = 'Marketing Trip Follow-up';
 $breadcrumbs = [['label' => 'Home', 'url' => app_url('index.php')], ['label' => 'Customer Follow-up']];
-$internalBackUrl=requested_return_url(app_url('admin.php'));
+$internalBackUrl=requested_return_url(app_url('index.php'));
 $message = $error = '';
 $destinationId = max(0, (int) ($_GET['destination_id'] ?? $_POST['destination_id'] ?? 0));
 $sourceVisitId = max(0, (int) ($_GET['visit_id'] ?? $_POST['source_visit_id'] ?? 0));

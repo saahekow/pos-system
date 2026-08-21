@@ -771,6 +771,10 @@ function setupOtherTownCreation() {
                     body,
                     headers: { Accept: 'application/json' },
                 });
+                const responseType = response.headers.get('content-type') || '';
+                if (!responseType.includes('application/json')) {
+                    throw new Error('The town could not be added because the server returned an invalid response. Refresh the page and try again.');
+                }
                 const result = await response.json();
                 if (!response.ok || !result.ok) throw new Error(result.message || 'The town could not be added.');
 

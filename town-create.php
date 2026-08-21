@@ -75,10 +75,10 @@ if ($currentVendor && current_user_role() === 'vendor') {
 if ($requestedVendorId > 0 && (is_admin_user() || (int)($currentVendor['id'] ?? 0) === $requestedVendorId)) {
     ensure_vendor_town_assignments_schema();
     db()->prepare(
-        'INSERT INTO vendor_town_assignments(vendor_id,town_id,location_id,is_active)
-         VALUES(?,NULL,?,1)
-         ON DUPLICATE KEY UPDATE is_active=1'
-    )->execute([$requestedVendorId, $locationId]);
+        'INSERT INTO vendor_town_assignments(vendor_id,town_id,location_id,assigned_by_user_id,is_active)
+         VALUES(?,NULL,?,?,1)
+         ON DUPLICATE KEY UPDATE assigned_by_user_id=VALUES(assigned_by_user_id),is_active=1'
+    )->execute([$requestedVendorId, $locationId, (int)current_user_id()]);
 }
 
 town_create_response(200, [

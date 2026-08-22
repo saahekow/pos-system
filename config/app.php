@@ -678,6 +678,66 @@ function ensure_customer_status_schema(): void
         db()->exec('ALTER TABLE customers ADD INDEX idx_customers_customer_status (customer_status)');
     }
     });
+    run_app_migration('20260822_repair_normalized_customer_trip_vendors', function (): void {
+    if (!db_table_exists('visits') || !db_table_exists('sales_trips') || !db_column_exists('customers','vendor_id')) return;
+    db()->exec("UPDATE customers c
+        INNER JOIN visits rv ON rv.id=(
+            SELECT MAX(v2.id) FROM visits v2
+            WHERE v2.customer_id=c.id AND v2.visit_type='registration' AND v2.record_status='completed'
+        )
+        INNER JOIN sales_trips st ON st.id=rv.sales_trip_id AND st.vendor_id IS NOT NULL
+        SET c.vendor_id=st.vendor_id
+        WHERE c.vendor_id IS NULL AND c.is_active=1 AND c.record_status='completed'");
+    db()->exec("UPDATE visits v INNER JOIN customers c ON c.id=v.customer_id
+        SET v.vendor_id=c.vendor_id
+        WHERE v.vendor_id IS NULL AND c.vendor_id IS NOT NULL");
+    });
+    run_app_migration('20260822_restore_trip_00020_vendor', function (): void {
+    if (!db_table_exists('visits') || !db_table_exists('sales_trips') || !db_table_exists('vendor_personnel')) return;
+    $statement=db()->query("SELECT COALESCE(MAX(vi.vendor_id),MAX(vp.vendor_id)) vendor_id
+        FROM sales_trips st
+        LEFT JOIN visits vi ON vi.sales_trip_id=st.id AND vi.visit_type='registration'
+        LEFT JOIN vendor_personnel vp ON vp.user_id=vi.recorded_by_user_id AND vp.is_active=1
+        WHERE st.trip_code='TRIP-00020'");
+    $vendorId=max(0,(int)($statement->fetchColumn()?:0));
+    if($vendorId<=0)return;
+    db()->prepare("UPDATE sales_trips SET vendor_id=? WHERE trip_code='TRIP-00020' AND vendor_id IS NULL")->execute([$vendorId]);
+    db()->prepare("INSERT IGNORE INTO sales_trip_vendor_assignments(sales_trip_id,vendor_id)
+        SELECT id,? FROM sales_trips WHERE trip_code='TRIP-00020'")->execute([$vendorId]);
+    db()->prepare("UPDATE customers c INNER JOIN visits vi ON vi.customer_id=c.id
+        INNER JOIN sales_trips st ON st.id=vi.sales_trip_id AND st.trip_code='TRIP-00020'
+        SET c.vendor_id=? WHERE c.vendor_id IS NULL")->execute([$vendorId]);
+    db()->prepare("UPDATE visits vi INNER JOIN sales_trips st ON st.id=vi.sales_trip_id AND st.trip_code='TRIP-00020'
+        SET vi.vendor_id=? WHERE vi.vendor_id IS NULL")->execute([$vendorId]);
+    if(db_table_exists('visit_notes'))db()->prepare("UPDATE visit_notes n INNER JOIN visits vi ON vi.id=n.visit_id
+        INNER JOIN sales_trips st ON st.id=vi.sales_trip_id AND st.trip_code='TRIP-00020'
+        SET n.vendor_id=? WHERE n.vendor_id IS NULL")->execute([$vendorId]);
+    });
+    run_app_migration('20260822_separate_sales_personnel_from_customer_ownership', function (): void {
+    if (!db_table_exists('visits') || !db_table_exists('sales_trips') || !db_table_exists('vendor_personnel')) return;
+    if (db_table_exists('visit_notes')) {
+        db()->exec("UPDATE visit_notes n
+            INNER JOIN visits vi ON vi.id=n.visit_id AND vi.visit_type='registration'
+            INNER JOIN sales_trips st ON st.id=vi.sales_trip_id AND st.vendor_id IS NULL AND st.trip_code='TRIP-00022'
+            INNER JOIN vendor_personnel vp ON vp.user_id=vi.recorded_by_user_id AND vp.vendor_id=vi.vendor_id
+            LEFT JOIN sales_trip_vendor_assignments va ON va.sales_trip_id=st.id
+            SET n.vendor_id=NULL
+            WHERE va.id IS NULL AND n.vendor_id=vi.vendor_id");
+    }
+    db()->exec("UPDATE customers c
+        INNER JOIN visits vi ON vi.customer_id=c.id AND vi.visit_type='registration' AND vi.record_status='completed'
+        INNER JOIN sales_trips st ON st.id=vi.sales_trip_id AND st.vendor_id IS NULL AND st.trip_code='TRIP-00022'
+        INNER JOIN vendor_personnel vp ON vp.user_id=vi.recorded_by_user_id AND vp.vendor_id=vi.vendor_id
+        LEFT JOIN sales_trip_vendor_assignments va ON va.sales_trip_id=st.id
+        SET c.vendor_id=NULL
+        WHERE va.id IS NULL AND c.vendor_id=vi.vendor_id");
+    db()->exec("UPDATE visits vi
+        INNER JOIN sales_trips st ON st.id=vi.sales_trip_id AND st.vendor_id IS NULL AND st.trip_code='TRIP-00022'
+        INNER JOIN vendor_personnel vp ON vp.user_id=vi.recorded_by_user_id AND vp.vendor_id=vi.vendor_id
+        LEFT JOIN sales_trip_vendor_assignments va ON va.sales_trip_id=st.id
+        SET vi.vendor_id=NULL
+        WHERE va.id IS NULL AND vi.visit_type='registration' AND vi.record_status='completed'");
+    });
     $schemaReady = true;
 }
 
@@ -2305,11 +2365,19 @@ function can_access_menu_item(string $key): bool
     if($personnel){
         $posKeys=['pos_shop_sales','pos_trip_sales','pos_promo','pos_transfer','pos_refund','pos_audit','pos_reports'];
         if(in_array($key,$posKeys,true)){
-            if(in_array($key,['pos_shop_sales','pos_trip_sales','pos_promo'],true))return !current_vendor_is_sor()&&(int)$personnel['can_make_sales']===1&&can_access_module('pos');
-            if($key==='pos_transfer')return (int)$personnel['can_transfer']===1&&can_access_module('pos');
-            if($key==='pos_refund')return (int)$personnel['can_refund']===1&&can_access_module('pos');
-            if($key==='pos_audit')return (int)$personnel['can_audit']===1&&can_access_module('pos');
-            if($key==='pos_reports')return can_access_module('pos');
+            $personnelAllowed=match($key){
+                'pos_shop_sales','pos_trip_sales','pos_promo'=>!current_vendor_is_sor()&&(int)$personnel['can_make_sales']===1,
+                'pos_transfer'=>(int)$personnel['can_transfer']===1,
+                'pos_refund'=>(int)$personnel['can_refund']===1,
+                'pos_audit'=>(int)$personnel['can_audit']===1,
+                'pos_reports'=>(int)$personnel['can_reports']===1,
+                default=>false,
+            };
+            if($personnelAllowed&&can_access_module('pos'))return true;
+            // Existing staff menu assignments remain authoritative. A disabled
+            // personnel switch withholds extra vendor access; it does not
+            // revoke access the staff member already had.
+            if(current_user_role()!=='staff')return false;
         }
         if(current_user_role()!=='staff')return false;
     }
@@ -2470,12 +2538,13 @@ function can_access_registration_trip(int $tripId): bool
             )
          )'
     );
+    $accessVendorId=current_user_role()==='vendor' ? (int)(current_vendor_profile()['id']??0) : 0;
     $statement->execute([
         $tripId,
         current_user_id(),
-        (int)(current_vendor_profile()['id'] ?? 0),
+        $accessVendorId,
         current_staff_id() ?: 0,
-        (int)(current_vendor_profile()['id'] ?? 0),
+        $accessVendorId,
     ]);
     return (int)$statement->fetchColumn() > 0;
 }

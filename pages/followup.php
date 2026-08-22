@@ -17,7 +17,7 @@ $mode = (string) ($_GET['mode'] ?? $_POST['mode'] ?? '');
 $mode = in_array($mode, ['type', 'lookup'], true) ? $mode : '';
 $userId = current_user_id();
 $staffId = current_staff_id();
-$currentVendor=current_vendor_profile();
+$currentVendor=current_user_role()==='vendor' ? current_vendor_profile() : null;
 $currentVendorId=(int)($currentVendor['id']??0);
 $managedTownIds=$currentVendorId?array_map(static function (array $town): int { return (int)$town['id']; },assigned_towns_for_vendor($currentVendorId)):[];
 $sharedTripAccess=false;

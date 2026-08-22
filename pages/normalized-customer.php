@@ -22,7 +22,7 @@ function flow_active_trip(): ?array
             OR st.vendor_id=?
          ) ORDER BY st.id DESC LIMIT 1"
     );
-    $vendorId = (int)(current_vendor_profile()['id'] ?? 0);
+    $vendorId = current_user_role()==='vendor' ? (int)(current_vendor_profile()['id']??0) : 0;
     $statement->execute([current_user_id(), current_staff_id() ?: 0, $vendorId, $vendorId]);
     return $statement->fetch() ?: null;
 }
@@ -208,6 +208,10 @@ function flow_save_note(int $visitId, int $customerId, string $feedback, string 
         return;
     }
 
+    $visitVendorStatement=db()->prepare('SELECT vendor_id FROM visits WHERE id=? LIMIT 1');
+    $visitVendorStatement->execute([$visitId]);
+    $visitVendorId=max(0,(int)($visitVendorStatement->fetchColumn()?:0));
+
     db()->prepare(
         'INSERT INTO visit_notes
          (note_ref,visit_id,customer_id,feedback,note,staff_id,vendor_id,recorded_by_user_id)
@@ -219,7 +223,7 @@ function flow_save_note(int $visitId, int $customerId, string $feedback, string 
         $feedback ?: null,
         $notes ?: null,
         current_staff_id(),
-        (int)(current_vendor_profile()['id'] ?? 0) ?: null,
+        $visitVendorId ?: null,
         current_user_id(),
     ]);
 }
@@ -304,7 +308,12 @@ foreach ($jobTypes as $jobType) {
 }
 $feedbackOptions = db()->query("SELECT feedback_label FROM visit_feedback_options WHERE is_active=1 ORDER BY feedback_label")->fetchAll();
 $addendumVendors=db()->query("SELECT id,vendor_name,phone,email FROM vendors WHERE is_active=1 ORDER BY vendor_name")->fetchAll();
-$currentVendorId=(int)(current_vendor_profile()['id']??0);
+$currentVendorId=current_user_role()==='vendor' ? (int)(current_vendor_profile()['id']??0) : 0;
+// Vendor-personnel membership authorizes POS work; it does not own marketing
+// customers. Staff customer ownership must come from the active trip.
+if($currentVendorId<=0 && $activeTrip){
+    $currentVendorId=max(0,(int)($activeTrip['vendor_id']??0));
+}
 $registeredPhones = db()->query(
     "SELECT c.id,c.customer_ref,c.customer_name,c.phone,c.other_phone,c.bus_loc_id,p.business_name
      FROM customers c
@@ -551,12 +560,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         : null;
                     $jobTypeId=max(0,(int)($_POST['job_type_id']??0));$jobTypeName=null;if($jobTypeId){$jobTypeStatement=db()->prepare('SELECT job_type_name FROM job_types WHERE id=? AND is_active=1');$jobTypeStatement->execute([$jobTypeId]);$jobTypeName=$jobTypeStatement->fetchColumn()?:null;}$masterCustomerId=customer_master_id_for_job($jobTypeId,max(0,(int)($_POST['master_customer_id']??0)));
                     $statement = db()->prepare("INSERT INTO customers(customer_ref,bus_loc_id,vendor_id,customer_name,job_type,job_type_id,master_customer_id,phone,other_phone,customer_picture,vehicle_registration_no,vin_no,supervisor_name,supervisor_phone,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-                    $statement->execute([next_project_reference('customer'),$placeId,(int)(current_vendor_profile()['id'] ?? 0) ?: null,$customerName,$jobTypeName,$jobTypeId?:null,$masterCustomerId,$phone,normalize_phone_number((string)($_POST['other_phone'] ?? '')) ?: null,$customerPicture,$isTaxiDestination ? (trim((string)($_POST['vehicle_registration_no'] ?? '')) ?: null) : null,$isTaxiDestination ? (trim((string)($_POST['vin_no'] ?? '')) ?: null) : null,$isTaxiDestination ? (trim((string)($_POST['supervisor_name'] ?? '')) ?: null) : null,$isTaxiDestination ? (normalize_phone_number((string)($_POST['supervisor_phone'] ?? '')) ?: null) : null,current_user_id()]);
+                    $statement->execute([next_project_reference('customer'),$placeId,$currentVendorId ?: null,$customerName,$jobTypeName,$jobTypeId?:null,$masterCustomerId,$phone,normalize_phone_number((string)($_POST['other_phone'] ?? '')) ?: null,$customerPicture,$isTaxiDestination ? (trim((string)($_POST['vehicle_registration_no'] ?? '')) ?: null) : null,$isTaxiDestination ? (trim((string)($_POST['vin_no'] ?? '')) ?: null) : null,$isTaxiDestination ? (trim((string)($_POST['supervisor_name'] ?? '')) ?: null) : null,$isTaxiDestination ? (normalize_phone_number((string)($_POST['supervisor_phone'] ?? '')) ?: null) : null,current_user_id()]);
                     $customerId = (int)db()->lastInsertId();
 
                     $evidence = null;
                     $statement = db()->prepare("INSERT INTO visits(visit_ref,sales_trip_id,place_session_id,bus_loc_id,customer_id,vendor_id,staff_id,recorded_by_user_id,visit_type,visit_date,arrival_time,visit_evidence,record_status) VALUES(?,?,?,?,?,?,?,?,'registration',CURDATE(),?,?,'completed')");
-                    $statement->execute([next_project_reference('visit'),(int)$activeTrip['id'],$placeSessionId,$placeId,$customerId,(int)(current_vendor_profile()['id'] ?? 0) ?: null,current_staff_id(),current_user_id(),$arrival,$evidence]);
+                    $statement->execute([next_project_reference('visit'),(int)$activeTrip['id'],$placeSessionId,$placeId,$customerId,$currentVendorId ?: null,current_staff_id(),current_user_id(),$arrival,$evidence]);
                     $visitId = (int)db()->lastInsertId();
                     flow_save_sale($visitId,$customerId,$placeId,$carPicture);
                     flow_save_note($visitId,$customerId,$feedback,$notes);

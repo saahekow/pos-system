@@ -8,7 +8,7 @@ require_module_access('customer_visit');
 
 $userId = (int)current_user_id();
 $staffId = current_staff_id() ?: 0;
-$vendorId = (int)(current_vendor_profile()['id'] ?? 0);
+$vendorId = current_user_role()==='vendor' ? (int)(current_vendor_profile()['id']??0) : 0;
 ensure_sales_trip_assignment_schema();
 $activeTripStatement = db()->prepare(
     'SELECT st.id,st.trip_code,st.recorded_by_user_id

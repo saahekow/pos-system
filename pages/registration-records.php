@@ -18,7 +18,7 @@ $dateTo = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date_to'] ?? '')) 
 $requestedReturnTo=trim((string)($_GET['return_to']??''));$allowedReturnBases=[app_url('admin-customers.php'),app_url('vendor-customers.php')];$returnTo='';foreach($allowedReturnBases as $allowedReturnBase){if($requestedReturnTo===$allowedReturnBase||str_starts_with($requestedReturnTo,$allowedReturnBase.'?')){$returnTo=$requestedReturnTo;break;}}$defaultBackUrl=app_url('marketing-trip.php');$backUrl=$returnTo!==''?$returnTo:$defaultBackUrl;$backLabel=$returnTo!==''?'Create Customers':'Marketing Trip';
 $userId = (int)current_user_id();
 $staffId = current_staff_id() ?: 0;
-$vendorId = (int)(current_vendor_profile()['id'] ?? 0);
+$vendorId = current_user_role()==='vendor' ? (int)(current_vendor_profile()['id']??0) : 0;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action'] ?? '') === 'delete_draft') {
     $deleteId = max(0, (int)($_POST['draft_id'] ?? 0));

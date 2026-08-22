@@ -87,7 +87,7 @@ if ($reportSection === 'visit-summary') {
 if (($selectedDestination || $allDestinations) && $mode !== '') {
     $reportUserId = (int)(current_user_id() ?? 0);
     $reportStaffId = (int)(current_staff_id() ?? 0);
-    $reportVendor = current_vendor_profile();
+    $reportVendor = current_user_role()==='vendor' ? current_vendor_profile() : null;
     $reportVendorId = (int)($reportVendor['id'] ?? 0);
     $reportSharedTripAccess = false;
     if ($reportStaffId) {

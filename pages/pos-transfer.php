@@ -3,7 +3,8 @@ require_once __DIR__ . '/../config/app.php';
 
 require_module_access('pos');
 if(current_vendor_personnel()&&!can_access_menu_item('pos_transfer')){http_response_code(403);exit('Transfer access has not been assigned to your account.');}
-if (current_user_role() === 'vendor' || current_vendor_personnel()) {
+$transferPersonnel=current_vendor_personnel();
+if (current_user_role() === 'vendor' || ($transferPersonnel&&(int)$transferPersonnel['can_transfer']===1)) {
     header('Location: ' . app_url('pos-incoming-transfers.php'));
     exit;
 }

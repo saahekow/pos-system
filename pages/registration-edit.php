@@ -47,6 +47,23 @@ function registration_edit_phone_conflict(string $phone, string $type, int $reco
     return null;
 }
 
+function registration_edit_vendor_id(array $record, array $payload): int
+{
+    $vendorId=max(0,(int)($payload['vendor_id']??0));
+    if($vendorId<=0 && (int)($record['customer_id']??0)>0){
+        $statement=db()->prepare('SELECT vendor_id FROM customers WHERE id=? LIMIT 1');
+        $statement->execute([(int)$record['customer_id']]);
+        $vendorId=max(0,(int)($statement->fetchColumn()?:0));
+    }
+    if($vendorId<=0 && current_user_role()==='vendor')$vendorId=max(0,(int)(current_vendor_profile()['id']??0));
+    if($vendorId<=0 && (int)($record['sales_trip_id']??0)>0){
+        $statement=db()->prepare('SELECT vendor_id FROM sales_trips WHERE id=? LIMIT 1');
+        $statement->execute([(int)$record['sales_trip_id']]);
+        $vendorId=max(0,(int)($statement->fetchColumn()?:0));
+    }
+    return $vendorId;
+}
+
 $type = (string)($_GET['type'] ?? $_POST['record_type'] ?? '');
 $id = max(0, (int)($_GET['id'] ?? $_POST['record_id'] ?? 0));
 $requestedReturnTo=trim((string)($_GET['return_to']??$_POST['return_to']??''));$recordsBaseUrl=app_url('registration-records.php');$defaultReturnTo=app_url('registration-records.php?tab='.($type==='draft'?'drafts':'completed'));$returnTo=($requestedReturnTo===$recordsBaseUrl||str_starts_with($requestedReturnTo,$recordsBaseUrl.'?'))?$requestedReturnTo:$defaultReturnTo;$returnWithStatus=static function(string $status,string $customerName)use($returnTo):string{return $returnTo.(str_contains($returnTo,'?')?'&':'?').'status='.rawurlencode($status).'&customer_name='.rawurlencode($customerName);};
@@ -148,6 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
     $payload['promo_plug'] = trim((string)($_POST['promo_plug'] ?? ($payload['promo_plug'] ?? '')));
     $arrivalTime = trim((string)($_POST['arrival_time'] ?? substr((string)($record['arrival_time'] ?? ''), 0, 5)));
     $departureTime = trim((string)($_POST['departure_time'] ?? substr((string)($record['departure_time'] ?? ''), 0, 5)));
+    $effectiveVendorId=registration_edit_vendor_id($record,$payload);
     $purchases = [];
     $purchaseError = '';
     $seenVins = [];
@@ -220,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
                 && ((string)($record['session_type'] ?? 'trip') === 'addendum'
                     || (trim((string)($record['google_location'] ?? '')) !== '' && trim((string)($record['arrival_time'] ?? '')) !== ''));
             if ((int)($record['customer_id'] ?? 0) > 0) {
-                db()->prepare("UPDATE customers SET vendor_id=?,customer_name=?,job_type=?,job_type_id=?,phone=?,other_phone=?,vehicle_registration_no=?,vin_no=?,supervisor_name=?,supervisor_phone=?,record_status=? WHERE id=?")->execute([max(0,(int)($payload['vendor_id']??0)) ?: null,$payload['customer_name']?:'Incomplete customer',$jobType,$payload['job_type_id']?:null,$payload['phone']?:null,$payload['other_phone']?:null,$payload['vehicle_registration_no']?:null,$payload['vin_no']?:null,$payload['supervisor_name']?:null,$payload['supervisor_phone']?:null,$canCompleteDraft?'completed':'draft',(int)$record['customer_id']]);
+                db()->prepare("UPDATE customers SET vendor_id=?,customer_name=?,job_type=?,job_type_id=?,phone=?,other_phone=?,vehicle_registration_no=?,vin_no=?,supervisor_name=?,supervisor_phone=?,record_status=? WHERE id=?")->execute([$effectiveVendorId ?: null,$payload['customer_name']?:'Incomplete customer',$jobType,$payload['job_type_id']?:null,$payload['phone']?:null,$payload['other_phone']?:null,$payload['vehicle_registration_no']?:null,$payload['vin_no']?:null,$payload['supervisor_name']?:null,$payload['supervisor_phone']?:null,$canCompleteDraft?'completed':'draft',(int)$record['customer_id']]);
             }
             if (!$canCompleteDraft) {
                 db()->prepare('UPDATE customer_visit_drafts SET draft_payload=? WHERE id=?')
@@ -237,7 +255,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
                         );
                         $customerStatement->execute([
-                            next_project_reference('customer'),(int)$record['bus_loc_id'],max(0,(int)($payload['vendor_id']??0)) ?: null,$payload['customer_name'],
+                            next_project_reference('customer'),(int)$record['bus_loc_id'],$effectiveVendorId ?: null,$payload['customer_name'],
                             $jobType,$payload['job_type_id'] ?: null,$payload['phone'],$payload['other_phone'] ?: null,
                             $payload['customer_picture'] ?: null,$payload['vehicle_registration_no'] ?: null,$payload['vin_no'] ?: null,
                             $payload['supervisor_name'] ?: null,$payload['supervisor_phone'] ?: null,current_user_id(),
@@ -252,7 +270,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
                     );
                     $visitStatement->execute([
                         next_project_reference('visit'),$record['sales_trip_id'] !== null ? (int)$record['sales_trip_id'] : null,(int)$record['place_session_id'],
-                        (int)$record['bus_loc_id'],$customerId,max(0,(int)($payload['vendor_id']??0)) ?: ((int)(current_vendor_profile()['id'] ?? 0) ?: null),
+                        (int)$record['bus_loc_id'],$customerId,$effectiveVendorId ?: null,
                         current_staff_id(),(int)($record['recorded_by_user_id'] ?? current_user_id()),
                         (string)($record['activity_date'] ?: date('Y-m-d')),substr((string)$record['arrival_time'],0,5) ?: null,
                     ]);
@@ -279,7 +297,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
                          VALUES(?,?,?,?,?,?,?,?)'
                     )->execute([
                         next_project_reference('visit_note'),$visitId,$customerId,$payload['feedback'],$payload['notes'],
-                        current_staff_id(),(int)(current_vendor_profile()['id'] ?? 0) ?: null,current_user_id(),
+                        current_staff_id(),$effectiveVendorId ?: null,current_user_id(),
                     ]);
                     db()->prepare('DELETE FROM customer_visit_drafts WHERE id=?')->execute([$id]);
                     db()->commit();
@@ -327,7 +345,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
                 if($noteId){
                     db()->prepare('UPDATE visit_notes SET feedback=?,note=? WHERE id=?')->execute([$payload['feedback']?:null,$payload['notes']?:null,$noteId]);
                 } elseif($payload['feedback']!==''||$payload['notes']!=='') {
-                    db()->prepare('INSERT INTO visit_notes(note_ref,visit_id,customer_id,feedback,note,staff_id,vendor_id,recorded_by_user_id) VALUES(?,?,?,?,?,?,?,?)')->execute([next_project_reference('visit_note'),$id,(int)$record['customer_id'],$payload['feedback']?:null,$payload['notes']?:null,current_staff_id(),(int)(current_vendor_profile()['id']??0)?:null,current_user_id()]);
+                    db()->prepare('INSERT INTO visit_notes(note_ref,visit_id,customer_id,feedback,note,staff_id,vendor_id,recorded_by_user_id) VALUES(?,?,?,?,?,?,?,?)')->execute([next_project_reference('visit_note'),$id,(int)$record['customer_id'],$payload['feedback']?:null,$payload['notes']?:null,current_staff_id(),$effectiveVendorId ?: null,current_user_id()]);
                 }
                 db()->prepare("DELETE FROM customer_pos_sale_vins WHERE customer_source='visit' AND record_id=?")->execute([$id]);
                 $insertPurchase=db()->prepare("INSERT INTO customer_pos_sale_vins(customer_source,record_id,vin_no,amount,created_by_user_id) VALUES('visit',?,?,?,?)");

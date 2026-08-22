@@ -317,7 +317,7 @@ $currentUserId = current_user_id();
 $staffStatement = db()->prepare('SELECT id FROM staff WHERE user_id = ? LIMIT 1');
 $staffStatement->execute([$currentUserId]);
 $currentStaffId = (int) ($staffStatement->fetchColumn() ?: 0);
-$currentVendor=current_vendor_profile();
+$currentVendor=current_user_role()==='vendor' ? current_vendor_profile() : null;
 $currentVendorId=(int)($currentVendor['id']??0);
 $canStartTrip=is_admin_user()||$currentStaffId>0;
 $action = (string) ($_GET['action'] ?? '');

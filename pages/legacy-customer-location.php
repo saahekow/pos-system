@@ -1,5 +1,13 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
+
+require_auth();
+
+if (!can_access_module('sales_trip') && !can_access_module('vendor_customers')) {
+    http_response_code(403);
+    exit('Access denied.');
+}
+
 ensure_customer_status_schema();
 ensure_places_management_schema();
 ensure_customer_promo_plug_schema();

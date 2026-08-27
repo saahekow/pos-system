@@ -5,7 +5,8 @@ require_auth();
 $canTrip = can_access_menu_item('marketing_trip_registration')||can_access_menu_item('marketing_location_registration')||can_access_menu_item('marketing_customer')||can_access_menu_item('marketing_sales')||can_access_menu_item('marketing_promo_plug');
 $canReports = can_access_module('customer_followup')||can_access_menu_item('marketing_report_trip')||can_access_menu_item('marketing_report_location')||can_access_menu_item('marketing_report_customer')||can_access_menu_item('marketing_report_notes')||can_access_menu_item('marketing_report_promo')||can_access_menu_item('marketing_report_vendors');
 $canAddendumRegistration = can_access_module('vendor_customers');
-$canMarketingAdmin = can_access_module('admin') || can_access_module('create_customer');
+$canMarketingAssignments = is_admin_user() || (current_user_role()==='staff' && in_array('admin',current_user_assigned_module_keys(),true));
+$canMarketingAdmin = $canMarketingAssignments || can_access_menu_item('setup_locations') || can_access_menu_item('setup_vendors') || can_access_module('create_customer');
 if (!$canTrip && !$canReports && !$canAddendumRegistration && !$canMarketingAdmin) {
     header('Location: ' . app_url('index.php'));
     exit;
@@ -13,7 +14,10 @@ if (!$canTrip && !$canReports && !$canAddendumRegistration && !$canMarketingAdmi
 
 $view = (string)($_GET['view'] ?? 'menu');
 if (!in_array($view, ['menu', 'trip', 'reports', 'admin', 'setup', 'assignment'], true)) $view = 'menu';
-if (($view === 'trip' && !$canTrip) || ($view === 'reports' && !$canReports) || (in_array($view, ['admin','setup','assignment'], true) && !$canMarketingAdmin)) {
+if (($view === 'trip' && !$canTrip)
+    || ($view === 'reports' && !$canReports)
+    || (in_array($view, ['admin','setup'], true) && !$canMarketingAdmin)
+    || ($view === 'assignment' && !$canMarketingAssignments)) {
     $view = 'menu';
 }
 
@@ -66,17 +70,17 @@ if ($view === 'menu') {
     }
 } elseif ($view === 'admin') {
     $cards[]=['title'=>'Setup','description'=>'Manage locations, vendors, customers, and related marketing setup.','icon'=>'fa-solid fa-sliders','url'=>app_url('marketing.php?view=setup')];
-    if (can_access_module('admin')) $cards[]=['title'=>'Assignment','description'=>'Open staff and administrative assignment areas.','icon'=>'fa-solid fa-clipboard-check','url'=>app_url('marketing.php?view=assignment')];
+    if ($canMarketingAssignments) $cards[]=['title'=>'Assignment','description'=>'Open staff and administrative assignment areas.','icon'=>'fa-solid fa-clipboard-check','url'=>app_url('marketing.php?view=assignment')];
 } elseif ($view === 'assignment') {
     $cards[]=['title'=>'Staff','description'=>'Assign Marketing and other operational menu access to staff accounts.','icon'=>'fa-solid fa-id-card-clip','url'=>app_url('assignments.php?return_to='.rawurlencode(app_url('marketing.php?view=assignment')))];
     $cards[]=['title'=>'Admin','description'=>'Open administrative staff, vendor, town, and customer assignments.','icon'=>'fa-solid fa-user-gear','url'=>app_url('admin.php?view=assignment&return_to='.rawurlencode(app_url('marketing.php?view=assignment')))];
 } else {
-    if (can_access_module('admin')) {
+    if ($canMarketingAdmin) {
         $marketingSetupReturn=rawurlencode(app_url('marketing.php?view=setup'));
-        $cards[]=['title'=>'Location Setup','description'=>'Manage the Region → MMDA → Town hierarchy.','icon'=>'fa-solid fa-map-location-dot','url'=>app_url('location-setup.php?return_to='.$marketingSetupReturn)];
-        $cards[]=['title'=>'Vendor','description'=>'Create and manage vendor accounts.','icon'=>'fa-solid fa-store','url'=>app_url('vendor-setup.php?return_to='.$marketingSetupReturn)];
-        $cards[]=['title'=>'Customer','description'=>'Create customers outside a marketing trip.','icon'=>'fa-solid fa-user-plus','url'=>app_url('admin-customers.php?return_to='.$marketingSetupReturn)];
-        $cards[]=['title'=>'Assign Customer to Vendor','description'=>'Assign existing customer records to vendors.','icon'=>'fa-solid fa-user-tag','url'=>app_url('customer-vendor-assignments.php?return_to='.$marketingSetupReturn)];
+        if(can_access_menu_item('setup_locations'))$cards[]=['title'=>'Location Setup','description'=>'Manage the Region → MMDA → Town hierarchy.','icon'=>'fa-solid fa-map-location-dot','url'=>app_url('location-setup.php?return_to='.$marketingSetupReturn)];
+        if(can_access_menu_item('setup_vendors'))$cards[]=['title'=>'Vendor','description'=>'Create and manage vendor accounts.','icon'=>'fa-solid fa-store','url'=>app_url('vendor-setup.php?return_to='.$marketingSetupReturn)];
+        if(can_access_module('create_customer'))$cards[]=['title'=>'Customer','description'=>'Create customers outside a marketing trip.','icon'=>'fa-solid fa-user-plus','url'=>app_url('admin-customers.php?return_to='.$marketingSetupReturn)];
+        if($canMarketingAssignments)$cards[]=['title'=>'Assign Customer to Vendor','description'=>'Assign existing customer records to vendors.','icon'=>'fa-solid fa-user-tag','url'=>app_url('customer-vendor-assignments.php?return_to='.$marketingSetupReturn)];
     } elseif (can_access_module('vendor_customers')) {
         $cards[]=['title'=>'Customer','description'=>'Create customers within your assigned town.','icon'=>'fa-solid fa-user-plus','url'=>app_url('vendor-customers.php')];
     }

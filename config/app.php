@@ -965,6 +965,75 @@ function ensure_pos_sales_schema(): void
         if (!db_column_exists('pos_sale_items','customer_discount_amount')) db()->exec('ALTER TABLE pos_sale_items ADD COLUMN customer_discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 AFTER total_amount');
         db()->exec('UPDATE pos_sale_items SET list_unit_price=unit_price WHERE list_unit_price=0');
     });
+    run_app_migration('20260824_add_customer_discount_percentage', function (): void {
+        if (!db_column_exists('pos_sale_items','customer_discount_percentage')) {
+            db()->exec('ALTER TABLE pos_sale_items ADD COLUMN customer_discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER customer_discount_amount');
+        }
+    });
+    run_app_migration('20260824_import_missing_plugs_and_extend_price_history', function (): void {
+        if (!db_column_exists('plug_price_history','markup')) {
+            db()->exec('ALTER TABLE plug_price_history ADD COLUMN markup DECIMAL(14,2) NULL AFTER price');
+        }
+        if (!db_column_exists('plug_price_history','wholesale')) {
+            db()->exec('ALTER TABLE plug_price_history ADD COLUMN wholesale DECIMAL(14,2) NULL AFTER markup');
+        }
+
+        $missingPlugs = [
+            ['Autolite','AP3924'], ['Autolite','APP5363'], ['Autolite','APP5682'],
+            ['Autolite','XP3923'], ['Autolite','XP5263'], ['Autolite','XP5682'],
+            ['Autolite','XP5683'], ['Autolite','XP5701'], ['Autolite','XP5702'],
+            ['Bosch','VA6SIP80'],
+            ['Champion','RERX4ZWYPB'], ['Champion','RERX4ZWYPB-1'], ['Champion','RES8PYB5'],
+            ['Denso','IKH24'], ['Denso','ZXE27HBR8'], ['Denso','ZXU22HCR8'],
+            ['NGK','ILNFR7A7G'], ['NGK','ILZKR7G7G'], ['NGK','ILZKR8A'],
+            ['NGK','ILZNAR8A7G'], ['NGK','LKR7DIX-11S'], ['NGK','LNAR7AIX'],
+            ['NGK','SILKFR8A6'], ['NGK','SILZKFR8H7S'],
+        ];
+        $insertPlug = db()->prepare(
+            'INSERT IGNORE INTO spark_plugs (brand_name,plug_number)
+             VALUES (?,?)'
+        );
+        foreach ($missingPlugs as [$brandName,$plugNumber]) {
+            $insertPlug->execute([$brandName,$plugNumber]);
+        }
+
+        $plugStatement = db()->prepare(
+            'SELECT id FROM spark_plugs
+             WHERE LOWER(TRIM(brand_name))=LOWER(TRIM(?))
+               AND LOWER(TRIM(plug_number))=LOWER(TRIM(?))
+             LIMIT 1'
+        );
+        $plugStatement->execute(['Autoplus','LMBR7CIY-11T']);
+        $sparkPlugId = (int)($plugStatement->fetchColumn() ?: 0);
+        if ($sparkPlugId > 0) {
+            $insertPrice = db()->prepare(
+                'INSERT INTO plug_price_history
+                    (spark_plug_id,price,markup,wholesale,effective_at,note,recorded_by_user_id,created_at)
+                 SELECT ?,?,NULL,NULL,?,NULL,NULL,?
+                 WHERE NOT EXISTS (
+                    SELECT 1 FROM plug_price_history
+                    WHERE spark_plug_id=? AND price=? AND effective_at=?
+                 )'
+            );
+            foreach ([
+                [100.00,'2026-08-06 13:05:14'],
+                [125.00,'2026-08-10 10:55:57'],
+            ] as [$price,$effectiveAt]) {
+                $insertPrice->execute([
+                    $sparkPlugId,$price,$effectiveAt,$effectiveAt,
+                    $sparkPlugId,$price,$effectiveAt,
+                ]);
+            }
+        }
+    });
+    run_app_migration('20260824_set_wholesale_price_markup', function (): void {
+        if (db_column_exists('plug_price_history', 'markup')) {
+            db()->exec('ALTER TABLE plug_price_history MODIFY COLUMN markup DECIMAL(5,2) NULL');
+        }
+        if (db_column_exists('plug_price_history', 'markup') && db_column_exists('plug_price_history', 'wholesale')) {
+            db()->exec('UPDATE plug_price_history SET markup=25.00, wholesale=ROUND(price * 0.75, 2)');
+        }
+    });
     $schemaReady = true;
 }
 
@@ -2347,6 +2416,19 @@ function staff_child_menu_definitions(): array
         'pos_reports'=>['group'=>'POS','title'=>'Reports','description'=>'View POS sales, transfer, refund, and notes reports.','icon'=>'fa-solid fa-chart-column'],
         'admin_vehicle_log'=>['group'=>'Admin','title'=>'Vehicle Log','description'=>'Open fuel, log book, and vehicle movement records.','icon'=>'fa-solid fa-car-side'],
         'admin_reports'=>['group'=>'Admin','title'=>'Reports','description'=>'Open administrative and operational reports.','icon'=>'fa-solid fa-chart-line'],
+        'setup_accounts'=>['group'=>'Setup','title'=>'Accounts','description'=>'Prepare user accounts and access controls.','icon'=>'fa-solid fa-users-gear'],
+        'setup_roles'=>['group'=>'Setup','title'=>'Role Setup','description'=>'Manage staff roles used in Staff Setup.','icon'=>'fa-solid fa-user-tag'],
+        'setup_feedback'=>['group'=>'Setup','title'=>'Feedback Setup','description'=>'Manage destination visit feedback options.','icon'=>'fa-solid fa-message'],
+        'setup_referrals'=>['group'=>'Setup','title'=>'Referral Source Setup','description'=>'Manage POS referral source choices.','icon'=>'fa-solid fa-bullhorn'],
+        'setup_commissions'=>['group'=>'Setup','title'=>'Plug Commission Setup','description'=>'Manage spark plug commission percentages.','icon'=>'fa-solid fa-percent'],
+        'setup_destinations'=>['group'=>'Setup','title'=>'Destination Setup','description'=>'Manage marketing trip destinations.','icon'=>'fa-solid fa-map-location-dot'],
+        'setup_locations'=>['group'=>'Setup','title'=>'Location Setup','description'=>'Manage regions, MMDAs, and towns.','icon'=>'fa-solid fa-location-dot'],
+        'setup_vendors'=>['group'=>'Setup','title'=>'Vendor Setup','description'=>'Create and manage vendor accounts.','icon'=>'fa-solid fa-truck-field'],
+        'setup_shop_types'=>['group'=>'Setup','title'=>'Shop Type Setup','description'=>'Manage shop type options.','icon'=>'fa-solid fa-store'],
+        'setup_customer_types'=>['group'=>'Setup','title'=>'Customer Type Setup','description'=>'Manage customer type choices.','icon'=>'fa-solid fa-briefcase'],
+        'setup_vehicles'=>['group'=>'Setup','title'=>'Vehicle Setup','description'=>'Manage vehicles available to trips.','icon'=>'fa-solid fa-car-side'],
+        'setup_attendance'=>['group'=>'Setup','title'=>'Attendance Setup','description'=>'Manage attendance sessions and GPS locations.','icon'=>'fa-solid fa-calendar-plus'],
+        'setup_staff'=>['group'=>'Setup','title'=>'Staff Setup','description'=>'Manage staff profiles and team records.','icon'=>'fa-solid fa-id-card-clip'],
         'data_vin_search_1'=>['group'=>'Data Management','title'=>'VIN Search 1','description'=>'Use the current VIN Search service.','icon'=>'fa-solid fa-barcode'],
         'data_reports'=>['group'=>'Data Management','title'=>'Reports','description'=>'Review saved VIN searches.','icon'=>'fa-solid fa-chart-column'],
     ];
@@ -2388,7 +2470,9 @@ function can_access_menu_item(string $key): bool
         'marketing_sales'=>['pos'],'marketing_promo_plug'=>['sales_trip','customer_visit'],
         'marketing_report_trip'=>['reports'],'marketing_report_location'=>['reports'],'marketing_report_customer'=>['reports'],'marketing_report_notes'=>['reports'],'marketing_report_promo'=>['reports'],'marketing_report_vendors'=>['reports'],
         'pos_shop_sales'=>['pos'],'pos_trip_sales'=>['pos'],'pos_promo'=>['pos'],'pos_transfer'=>['pos'],'pos_refund'=>['pos'],'pos_audit'=>['pos'],'pos_reports'=>['pos'],
-        'admin_vehicle_log'=>['vehicle_log'],'admin_reports'=>['reports'],'data_vin_search_1'=>['vin_search'],'data_reports'=>['vin_search'],
+        'admin_vehicle_log'=>['vehicle_log'],'admin_reports'=>['reports'],
+        'setup_accounts'=>['admin'],'setup_roles'=>['admin'],'setup_feedback'=>['admin'],'setup_referrals'=>['admin'],'setup_commissions'=>['admin'],'setup_destinations'=>['admin'],'setup_locations'=>['admin'],'setup_vendors'=>['admin'],'setup_shop_types'=>['admin'],'setup_customer_types'=>['admin'],'setup_vehicles'=>['admin'],'setup_attendance'=>['admin'],'setup_staff'=>['admin'],
+        'data_vin_search_1'=>['vin_search'],'data_reports'=>['vin_search'],
     ];
     if(current_user_role()==='staff'&&in_array($key,['marketing_report_trip','marketing_report_location','marketing_report_customer','marketing_report_notes','marketing_report_promo','marketing_report_vendors','admin_reports'],true))return true;
     foreach($legacy[$key]??[] as $moduleKey){if(in_array($moduleKey,$assigned,true))return true;}
@@ -2423,6 +2507,7 @@ function can_access_module(string $moduleKey): bool
             'pos'=>['marketing_sales','pos_shop_sales','pos_trip_sales','pos_promo','pos_transfer','pos_refund','pos_audit','pos_reports'],
             'reports'=>['marketing_report_trip','marketing_report_location','marketing_report_customer','marketing_report_notes','marketing_report_promo','marketing_report_vendors','admin_reports'],
             'vehicle_log'=>['admin_vehicle_log'],'vin_search'=>['data_vin_search_1','data_reports'],
+            'admin'=>['setup_accounts','setup_roles','setup_feedback','setup_referrals','setup_commissions','setup_destinations','setup_locations','setup_vendors','setup_shop_types','setup_customer_types','setup_vehicles','setup_attendance','setup_staff'],
         ];
         if(isset($childMap[$moduleKey])){foreach($childMap[$moduleKey] as $childKey){if(can_access_menu_item($childKey))return true;}return false;}
     }
@@ -2571,6 +2656,18 @@ function require_module_access(string $moduleKey): void
     echo '</section>';
     require __DIR__ . '/../includes/footer.php';
     exit;
+}
+
+function require_menu_item_access(string $menuKey): void
+{
+    require_auth();
+
+    if (can_access_menu_item($menuKey)) {
+        return;
+    }
+
+    http_response_code(403);
+    exit('Access denied.');
 }
 
 function redirect_if_authenticated(): void

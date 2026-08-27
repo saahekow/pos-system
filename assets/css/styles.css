@@ -2597,13 +2597,53 @@ body .management-panel .secondary-button[href*="vendor-personnel.php"] i {
 
 /* POS transfer interface */
 .pos-transfer-form {
-    max-width: 880px;
+    max-width: 1320px;
     margin: 18px auto 0;
     overflow: hidden;
     border: 1px solid #dce5f1;
     border-radius: 18px;
     background: #fff;
     box-shadow: 0 12px 30px rgba(31, 69, 126, .07);
+}
+
+.pos-transfer-workspace { display:grid;grid-template-columns:minmax(520px,1.5fr) minmax(360px,.8fr);align-items:start;gap:8px;padding:0 10px; }
+.pos-transfer-entry { min-width:0; }
+.pos-transfer-live-receipt { position:sticky;top:18px;min-width:0;margin:18px 8px 18px 0;border:1px solid #dce5f0;border-radius:14px;background:#fff;box-shadow:0 8px 22px rgba(28,55,90,.08);overflow:hidden; }
+.pos-transfer-live-receipt__head { display:flex;align-items:center;justify-content:space-between;gap:15px;padding:14px 16px;color:#ffffef;background:#77784f; }
+.pos-transfer-live-receipt__head > div { display:grid;gap:2px; }
+.pos-transfer-live-receipt__head .section-kicker { color:#eeeed0;font-size:.6rem;letter-spacing:.12em;text-transform:uppercase; }
+.pos-transfer-live-receipt__head strong { font-size:1rem; }
+.pos-transfer-live-receipt__meta { display:grid;grid-template-columns:.8fr 1.2fr;border-bottom:1px solid #e7edf4; }
+.pos-transfer-live-receipt__meta > span { display:grid;gap:3px;min-width:0;padding:11px 14px; }
+.pos-transfer-live-receipt__meta > span + span { border-left:1px solid #e7edf4; }
+.pos-transfer-live-receipt__meta small,.pos-transfer-live-receipt__note small { color:#73744d;font-size:.61rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase; }
+.pos-transfer-live-receipt__meta strong { overflow:hidden;font-size:.76rem;text-overflow:ellipsis;white-space:nowrap; }
+.pos-transfer-live-receipt__table { max-height:410px;overflow:auto;padding:4px 12px; }
+.pos-transfer-live-receipt table { width:100%;border-collapse:collapse;font-size:.69rem; }
+.pos-transfer-live-receipt th,.pos-transfer-live-receipt td { padding:9px 5px;border-bottom:1px solid #edf1f5;text-align:right;white-space:nowrap; }
+.pos-transfer-live-receipt th:first-child,.pos-transfer-live-receipt td:first-child { max-width:150px;text-align:left;white-space:normal; }
+.pos-transfer-live-receipt th { color:#73744d;font-size:.57rem;text-transform:uppercase; }
+.pos-transfer-live-receipt__note { padding:10px 14px;border-top:1px solid #edf1f5;background:#fafaf3; }
+.pos-transfer-live-receipt__note p { margin:4px 0 0;color:#525334;font-size:.72rem;white-space:pre-wrap; }
+.pos-transfer-live-receipt__totals { display:grid;gap:5px;margin:0;padding:12px 15px 15px; }
+.pos-transfer-live-receipt__totals div { display:flex;justify-content:flex-end;gap:22px; }
+.pos-transfer-live-receipt__totals dt { min-width:105px;color:#67704f;font-size:.7rem; }
+.pos-transfer-live-receipt__totals dd { min-width:95px;margin:0;text-align:right;font-size:.75rem;font-weight:800; }
+.pos-transfer-live-receipt__totals .is-net { padding-top:8px;border-top:1px solid #b5b482;color:#62613f; }
+
+@media (max-width:980px) {
+    .pos-transfer-workspace { grid-template-columns:1fr; }
+    .pos-transfer-live-receipt { position:static;margin:0 8px 18px; }
+}
+
+@media (max-width:560px) {
+    .pos-transfer-workspace { padding:0; }
+    .pos-transfer-live-receipt { margin:11px; }
+    .pos-transfer-live-receipt__head { padding:12px; }
+    .pos-transfer-live-receipt__meta { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .pos-transfer-live-receipt__meta > span + span { border-top:0;border-left:1px solid #e7edf4; }
+    .pos-transfer-live-receipt__table { padding-right:5px;padding-left:5px; }
+    .pos-transfer-live-receipt th,.pos-transfer-live-receipt td { padding:8px 3px;font-size:.61rem; }
 }
 
 .pos-transfer-grid {
@@ -2691,7 +2731,7 @@ body .management-panel .secondary-button[href*="vendor-personnel.php"] i {
 }
 .pos-transfer-line-total {
     display: grid;
-    grid-template-columns: repeat(3,minmax(0,1fr));
+    grid-template-columns: repeat(2,minmax(0,1fr));
     gap: 0;
     padding: 0;
     border-top: 1px solid #e2e9f2;
@@ -2804,7 +2844,7 @@ body .management-panel .secondary-button[href*="vendor-personnel.php"] i {
     .pos-transfer-edit span { display: none; }
     .pos-transfer-remove { width: 34px; height: 34px; }
     .pos-transfer-product__fields { gap: 15px 10px; padding: 14px 12px; }
-    .pos-transfer-line-total { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; padding: 12px; }
+    .pos-transfer-line-total { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; padding: 12px; }
     .pos-transfer-line-total > span { min-width: 0; }
     .pos-transfer-line-total > span:nth-child(2) { justify-items: center; text-align: center; }
     .pos-transfer-line-total b { font-size: .76rem; }
@@ -12071,7 +12111,7 @@ input.is-duplicate { border-color: var(--danger) !important; box-shadow: 0 0 0 3
 .pos-sales-form--lined > .pos-sales-field > .pos-sales-field__body label { position:static;width:auto;height:auto;margin:0;overflow:visible;clip:auto;color:#26364d;font-size:.72rem;font-weight:800;white-space:normal; }
 .pos-sales-form--lined .pos-sales-derived-value { min-height:44px;display:flex;align-items:center;padding:10px 12px;border:1px solid #c9d5e4;border-radius:8px;background:#f7f9fc; }
 .pos-sales-form--lined .pos-sale-products { padding:14px 10px;background:#f7f9fc; }
-.pos-sales-form--lined .pos-sale-product__fields { grid-template-columns:minmax(150px,1.2fr) minmax(150px,1.2fr) minmax(95px,.65fr) minmax(95px,.65fr) minmax(155px,1fr);align-items:end;padding:10px;border-top:1px solid #d8e0e9; }
+.pos-sales-form--lined .pos-sale-product__fields { grid-template-columns:minmax(150px,1.2fr) minmax(150px,1.2fr) minmax(90px,.6fr) minmax(85px,.55fr) minmax(105px,.65fr) minmax(155px,1fr);align-items:end;padding:10px;border-top:1px solid #d8e0e9; }
 .pos-sales-form--lined .pos-transfer-product { border-radius:8px;background:#fff; }
 
 .pos-sales-form--sectioned > .pos-sales-field,
@@ -12089,7 +12129,7 @@ input.is-duplicate { border-color: var(--danger) !important; box-shadow: 0 0 0 3
 .pos-sales-section-menu button:hover i { transform:translateY(-2px); }
 .pos-sales-section-menu button.is-active i { color:#fff;background:#2563d9;border-color:#b9d1ff;box-shadow:0 6px 16px rgba(37,99,217,.28); }
 .pos-sales-form--sectioned .pos-sale-products { padding:16px;background:#fff; }
-.pos-sales-form--sectioned .pos-sale-product__fields { grid-template-columns:minmax(150px,1.2fr) minmax(150px,1.2fr) minmax(95px,.65fr) minmax(95px,.65fr) minmax(155px,1fr);align-items:end; }
+.pos-sales-form--sectioned .pos-sale-product__fields { grid-template-columns:minmax(150px,1.2fr) minmax(150px,1.2fr) minmax(90px,.6fr) minmax(85px,.55fr) minmax(105px,.65fr) minmax(155px,1fr);align-items:end; }
 .pos-sales-form--sectioned .pos-sale-products__heading { margin-bottom:14px;padding:0 2px 11px;border-bottom:1px solid #e4eaf2; }
 .pos-sales-form--sectioned .pos-sale-products__heading .section-kicker { color:#2563d9;font-size:.61rem;letter-spacing:.12em; }
 .pos-sales-form--sectioned .pos-sale-products__heading strong { font-size:1rem; }
@@ -12106,6 +12146,17 @@ input.is-duplicate { border-color: var(--danger) !important; box-shadow: 0 0 0 3
 .pos-sales-form--sectioned .pos-transfer-field > input,
 .pos-sales-form--sectioned .pos-transfer-field > select,
 .pos-sales-form--sectioned .pos-transfer-field .form-lookup-button { min-height:44px;border-radius:9px;border-color:#ccd8e7;background:#fff;font-size:.84rem;box-shadow:0 2px 6px rgba(33,65,110,.04); }
+.pos-sale-product__fields .form-lookup-button {
+    height: 54px;
+    min-height: 54px;
+    max-height: 54px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.pos-sale-product__fields .form-lookup-button i {
+    flex: 0 0 auto;
+}
 .pos-sales-form--sectioned .pos-transfer-field > input { padding:9px 11px; }
 .pos-sales-form--sectioned .pos-transfer-field > input::placeholder { color:#98a5b6; }
 .pos-sales-form--sectioned .pos-sale-product__history { margin:0;padding:8px 10px;border-radius:8px;color:#63738a;background:#f2f6fb;font-size:.68rem;line-height:1.35; }
@@ -12346,15 +12397,66 @@ textarea,
     color: #11120f !important;
 }
 
-/* Keep the Menu Access selector compact while its options remain accessible. */
+/* Show every assignable submenu so staff access can be granted individually. */
 .assignment-permissions-panel .permission-groups {
-    max-height: 380px;
+    grid-auto-rows: max-content;
+    align-content: start;
+    max-height: 520px;
     padding-right: 6px;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-color: #8f8e60 #d4d3a6;
     scrollbar-width: thin;
+}
+
+.assignment-permissions-panel .permission-group {
+    height: max-content;
+    min-height: max-content;
+    align-self: start;
+}
+
+.assignment-permissions-panel .permission-group .permission-list {
+    display: grid !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.assignment-permissions-panel label.permission-row {
+    position: relative !important;
+    display: grid !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 58px !important;
+    margin: 0 !important;
+    padding: 10px 12px !important;
+    overflow: visible !important;
+    clip: auto !important;
+    clip-path: none !important;
+    white-space: normal !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.assignment-permissions-panel label.permission-row > input[data-permission-item] {
+    position: static !important;
+    display: block !important;
+    width: 17px !important;
+    height: 17px !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+.assignment-permissions-panel label.permission-row > :is(.permission-row__icon, .permission-row__text) {
+    display: grid !important;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
 
 .assignment-permissions-panel .permission-groups::-webkit-scrollbar {
@@ -12374,7 +12476,7 @@ textarea,
 
 @media (max-width: 640px) {
     .assignment-permissions-panel .permission-groups {
-        max-height: 320px;
+        max-height: 420px;
     }
 }
 
@@ -12898,4 +13000,49 @@ textarea,
 .app-page--internal .registration-records-table tbody tr:hover td,
 .app-page--internal .registration-records-table tbody tr:focus-within td {
     background: #deddae !important;
+}
+
+/* Let the transfer form and receipt share the parent panel's background. */
+.pos-transfer-section-menu {
+    grid-template-columns: repeat(4, minmax(70px, 1fr));
+}
+.pos-transfer-form--sectioned [data-transfer-section] {
+    display: none;
+}
+.pos-transfer-form--sectioned [data-transfer-section].is-active-section {
+    display: block;
+}
+.pos-transfer-form--sectioned .pos-transfer-section-menu {
+    display: grid;
+}
+.pos-transfer-form--sectioned .pos-transfer-products .pos-transfer-total {
+    margin: 16px 0 0;
+}
+@media (max-width: 560px) {
+    .pos-transfer-form--sectioned .pos-transfer-section-menu {
+        display: flex;
+    }
+    .pos-transfer-form--sectioned .pos-transfer-section-menu button {
+        flex: 1 0 68px;
+    }
+}
+
+.app-page--internal .pos-transfer-panel {
+    width: 100%;
+    max-width: 1120px;
+}
+
+.app-page--internal .pos-transfer-form {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal :is(.pos-transfer-workspace, .pos-transfer-entry) {
+    background: transparent !important;
+}
+
+.app-page--internal .pos-transfer-live-receipt {
+    background: #fff !important;
+    box-shadow: none !important;
 }

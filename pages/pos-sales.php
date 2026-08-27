@@ -89,6 +89,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             $sparkPlugIds=is_array($postedProducts['spark_plug_id']??null)?$postedProducts['spark_plug_id']:[];
             $prices=is_array($postedProducts['price']??null)?$postedProducts['price']:[];
             $quantities=is_array($postedProducts['quantity']??null)?$postedProducts['quantity']:[];
+            $discountPercentages=is_array($postedProducts['discount_percentage']??null)?$postedProducts['discount_percentage']:[];
             $priceHistoryIds=is_array($postedProducts['price_history_id']??null)?$postedProducts['price_history_id']:[];
             $vins=is_array($postedProducts['vin_number']??null)?$postedProducts['vin_number']:[];
             if(!$sparkPlugIds)$error='Add at least one product.';
@@ -99,6 +100,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 $brandName=trim((string)($brandNames[$index]??''));
                 $price=round((float)($prices[$index]??0),2);
                 $quantity=max(0,(int)($quantities[$index]??1));
+                $discountPercentage=round((float)($discountPercentages[$index]??0),2);
                 $priceHistoryId=max(0,(int)($priceHistoryIds[$index]??0));
                 $vin=strtoupper(trim((string)($vins[$index]??'')));
                 $plugStatement->execute([$sparkPlugId,$brandName]);
@@ -106,14 +108,19 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 if(!$plug){$error='Select a valid brand and plug number for product '.($index+1).'.';break;}
                 if($price<=0){$error='Enter a valid price for product '.($index+1).'.';break;}
                 if($quantity<1){$error='Enter a valid quantity for product '.($index+1).'.';break;}
+                if($discountPercentage<0||$discountPercentage>100){$error='Enter a discount between 0% and 100% for product '.($index+1).'.';break;}
                 $currentPrice=(float)($plug['current_price']??0);$priceHistoryId=(int)($plug['current_price_id']??0);
                 $isNewCurrentPrice=$currentPrice<=0||$price>$currentPrice;
                 $listUnitPrice=$currentPrice>0?$currentPrice:$price;
                 if($isNewCurrentPrice)$listUnitPrice=$price;
-                $customerDiscountAmount=$currentPrice>0&&$price<$currentPrice?round(($currentPrice-$price)*$quantity,2):0.0;
+                $baseLineTotal=round($price*$quantity,2);
+                $percentageDiscountAmount=round($baseLineTotal*$discountPercentage/100,2);
+                $manualDiscountAmount=$currentPrice>0&&$price<$currentPrice?round(($currentPrice-$price)*$quantity,2):0.0;
+                $customerDiscountAmount=round($manualDiscountAmount+$percentageDiscountAmount,2);
                 $commissionStatement=db()->prepare('SELECT commission_percentage FROM plug_commissions WHERE spark_plug_id=? AND is_active=1 LIMIT 1');$commissionStatement->execute([$sparkPlugId]);$commissionPercentage=$commissionApplies?(float)($commissionStatement->fetchColumn()?:0):null;
-                $lineTotal=round($price*$quantity,2);
-                $saleProducts[]=['plug'=>$plug,'spark_plug_id'=>$sparkPlugId,'price'=>$lineTotal,'unit_price'=>$price,'list_unit_price'=>$listUnitPrice,'customer_discount_amount'=>$customerDiscountAmount,'is_new_current_price'=>$isNewCurrentPrice,'quantity'=>$quantity,'price_history_id'=>$priceHistoryId?:null,'vin'=>$vin,'commission_percentage'=>$commissionPercentage,'commission_amount'=>$commissionApplies?round($lineTotal*(float)$commissionPercentage/100,2):null];
+                $lineTotal=max(0,round($baseLineTotal-$percentageDiscountAmount,2));
+                $discountedUnitPrice=max(0,round($price*(1-$discountPercentage/100),2));
+                $saleProducts[]=['plug'=>$plug,'spark_plug_id'=>$sparkPlugId,'price'=>$lineTotal,'base_unit_price'=>$price,'unit_price'=>$discountedUnitPrice,'list_unit_price'=>$listUnitPrice,'customer_discount_amount'=>$customerDiscountAmount,'customer_discount_percentage'=>$discountPercentage,'is_new_current_price'=>$isNewCurrentPrice,'quantity'=>$quantity,'price_history_id'=>$priceHistoryId?:null,'vin'=>$vin,'commission_percentage'=>$commissionPercentage,'commission_amount'=>$commissionApplies?round($lineTotal*(float)$commissionPercentage/100,2):null];
             }
         }
         $saleSubtotal=array_sum(array_column($saleProducts,'price'));
@@ -164,15 +171,15 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 $saleVendor=current_vendor_profile();$salePersonnel=current_vendor_personnel();
                 $salePersonnelName=$salePersonnel?trim(current_user_name()):'';
                 $newPriceIds=[];
-                $insertPriceHistory=db()->prepare('INSERT INTO plug_price_history(spark_plug_id,price,effective_at,note,recorded_by_user_id) VALUES(?,?,NOW(),?,?)');
-                foreach($saleProducts as &$saleProduct){if(!$saleProduct['is_new_current_price'])continue;$priceKey=$saleProduct['spark_plug_id'].'|'.number_format((float)$saleProduct['unit_price'],2,'.','');if(!isset($newPriceIds[$priceKey])){$insertPriceHistory->execute([$saleProduct['spark_plug_id'],$saleProduct['unit_price'],'Updated automatically from POS sale '.$saleRef,current_user_id()]);$newPriceIds[$priceKey]=(int)db()->lastInsertId();}$saleProduct['price_history_id']=$newPriceIds[$priceKey];}unset($saleProduct);
+                $insertPriceHistory=db()->prepare('INSERT INTO plug_price_history(spark_plug_id,price,markup,wholesale,effective_at,note,recorded_by_user_id) VALUES(?,?,25.00,ROUND(? * 0.75,2),NOW(),?,?)');
+                foreach($saleProducts as &$saleProduct){if(!$saleProduct['is_new_current_price'])continue;$priceKey=$saleProduct['spark_plug_id'].'|'.number_format((float)$saleProduct['base_unit_price'],2,'.','');if(!isset($newPriceIds[$priceKey])){$insertPriceHistory->execute([$saleProduct['spark_plug_id'],$saleProduct['base_unit_price'],$saleProduct['base_unit_price'],'Updated automatically from POS sale '.$saleRef,current_user_id()]);$newPriceIds[$priceKey]=(int)db()->lastInsertId();}$saleProduct['price_history_id']=$newPriceIds[$priceKey];}unset($saleProduct);
                 db()->prepare('INSERT INTO pos_sales(sale_ref,sale_date,sale_source,vendor_id,vendor_name,vendor_personnel_id,vendor_personnel_name,customer_mode,customer_id,customer_name,customer_phone,job_type_id,customer_type,location_id,area,referral_source_id,referral_source,comment,subtotal,customer_discount_amount,sales_type,recipient_vendor_id,recipient_vendor_name,delivery_charge,net_sales,commission_amount,amount_less_commission,status,recorded_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$saleRef,$saleDate,$saleSource,(int)($saleVendor['id']??0)?:null,trim((string)($saleVendor['vendor_name']??''))?:null,(int)($salePersonnel['id']??0)?:null,$salePersonnelName?:null,$customerMode,$customerId,$customerName,$customerPhone,$jobTypeId,$customerType,$locationId,$area,$referralSourceId,$referralName?:null,$comment?:null,$saleSubtotal,$customerDiscountAmount,$salesType,$recipientVendorId?:null,$recipientVendorName,$deliveryCharge,$netSales,$commissionAmount,$amountLessCommission,'completed',current_user_id()]);
                 $saleId=(int)db()->lastInsertId();
-                $insertItem=db()->prepare('INSERT INTO pos_sale_items(sale_id,spark_plug_id,price_history_id,brand_name,plug_number,quantity,unit_price,list_unit_price,total_amount,customer_discount_amount,commission_percentage,commission_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
+                $insertItem=db()->prepare('INSERT INTO pos_sale_items(sale_id,spark_plug_id,price_history_id,brand_name,plug_number,quantity,unit_price,list_unit_price,total_amount,customer_discount_amount,customer_discount_percentage,commission_percentage,commission_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)');
                 $insertVin=db()->prepare('INSERT INTO pos_sale_vins(sale_item_id,vin_number) VALUES(?,?)');
                 foreach($saleProducts as $saleProduct){
                     $plug=$saleProduct['plug'];$lineTotal=(float)$saleProduct['price'];$unitPrice=(float)$saleProduct['unit_price'];
-                    $insertItem->execute([$saleId,$saleProduct['spark_plug_id'],$saleProduct['price_history_id'],$plug['brand_name'],$plug['plug_number'],$saleProduct['quantity'],$unitPrice,$saleProduct['list_unit_price'],$lineTotal,$saleProduct['customer_discount_amount'],$saleProduct['commission_percentage'],$saleProduct['commission_amount']]);
+                    $insertItem->execute([$saleId,$saleProduct['spark_plug_id'],$saleProduct['price_history_id'],$plug['brand_name'],$plug['plug_number'],$saleProduct['quantity'],$unitPrice,$saleProduct['list_unit_price'],$lineTotal,$saleProduct['customer_discount_amount'],$saleProduct['customer_discount_percentage'],$saleProduct['commission_percentage'],$saleProduct['commission_amount']]);
                     if($saleProduct['vin']!=='')$insertVin->execute([(int)db()->lastInsertId(),$saleProduct['vin']]);
                 }
                 db()->commit();
@@ -258,6 +265,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <label class="pos-transfer-field pos-transfer-field--wide"><span>Plug number</span><select name="products[spark_plug_id][]" data-pos-product-plug data-popup-select data-popup-search data-popup-hide-empty data-popup-empty-text="No plug numbers are available for the selected brand." required><option value="">Search or select plug number</option><?php foreach($sparkPlugs as $plug):?><option value="<?=(int)$plug['id']?>" data-brand-name="<?=e(strtolower(trim((string)$plug['brand_name'])))?>" data-current-price="<?=e((string)($plug['current_price']??''))?>" data-current-effective="<?=e((string)($plug['current_effective_at']??''))?>" data-previous-price="<?=e((string)($plug['previous_price']??''))?>" data-previous-effective="<?=e((string)($plug['previous_effective_at']??''))?>" data-price-history-id="<?=e((string)($plug['current_price_id']??''))?>" hidden disabled><?=e((string)$plug['plug_number'])?></option><?php endforeach;?></select></label>
                     <label class="pos-transfer-field"><span>Price</span><input name="products[price][]" type="number" min="0" step="0.01" placeholder="0.00" data-pos-product-price required><input type="hidden" name="products[price_history_id][]" data-pos-product-price-history></label>
                     <label class="pos-transfer-field"><span>Quantity</span><input name="products[quantity][]" type="number" min="1" step="1" value="4" data-pos-product-quantity required></label>
+                    <label class="pos-transfer-field"><span>Discount (%)</span><input name="products[discount_percentage][]" type="number" min="0" max="100" step="0.01" value="0" placeholder="0" data-pos-product-discount></label>
                     <label class="pos-transfer-field"><span>VIN number</span><input name="products[vin_number][]" maxlength="17" placeholder="Enter VIN number" data-pos-product-vin></label>
                     <small class="pos-price-history pos-sale-product__history" data-pos-product-history>No price history available.</small>
                 </div>
@@ -404,9 +412,12 @@ document.addEventListener('DOMContentLoaded', function () {
             const plug=plugSelect?.value?(plugSelect.selectedOptions[0]?.textContent.trim()||''):'';
             const quantity=Math.max(1,Number(product.querySelector('[data-pos-product-quantity]')?.value||4));
             const unitPrice=Math.max(0,Number(product.querySelector('[data-pos-product-price]')?.value||0));
+            const discountPercentage=Math.min(100,Math.max(0,Number(product.querySelector('[data-pos-product-discount]')?.value||0)));
             const currentPrice=Math.max(0,Number(plugSelect?.selectedOptions[0]?.dataset.currentPrice||0));
-            const amount=quantity*unitPrice;subtotal+=amount;
-            discountTotal+=currentPrice>unitPrice?quantity*(currentPrice-unitPrice):0;
+            const baseAmount=quantity*unitPrice;
+            const percentageDiscount=baseAmount*discountPercentage/100;
+            const amount=Math.max(0,baseAmount-percentageDiscount);subtotal+=amount;
+            discountTotal+=(currentPrice>unitPrice?quantity*(currentPrice-unitPrice):0)+percentageDiscount;
             if(!brand&&!plug&&unitPrice<=0)return '';
             const row=document.createElement('tr');
             [([brand,plug].filter(Boolean).join(' ')||'Product'),String(quantity),money(unitPrice),money(amount)].forEach(function(value){const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);});
@@ -433,6 +444,8 @@ document.addEventListener('DOMContentLoaded', function () {
             const plugSelect = product.querySelector('[data-pos-product-plug]');
             const price = Number(product.querySelector('[data-pos-product-price]')?.value || 0);
             const quantity = Math.max(1,Number(product.querySelector('[data-pos-product-quantity]')?.value || 4));
+            const discountPercentage = Math.min(100,Math.max(0,Number(product.querySelector('[data-pos-product-discount]')?.value || 0)));
+            const discountedLineTotal = Math.max(0,price*quantity*(1-discountPercentage/100));
             const brand = brandSelect?.value ? brandSelect.selectedOptions[0]?.textContent.trim() || '' : '';
             const plug = plugSelect?.value ? plugSelect.selectedOptions[0]?.textContent.trim() || '' : '';
             const summary = product.querySelector('[data-pos-product-summary]');
@@ -440,7 +453,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const remove = product.querySelector('[data-pos-product-remove]');
             if(number)number.textContent=String(index+1);
             if(remove)remove.hidden=products.length===1;
-            if(summary)summary.textContent=([brand,plug].filter(Boolean).join(' · ')||'Not selected')+(price>0?' · '+quantity+' × GHS '+formatPrice(price):'');
+            if(summary)summary.textContent=([brand,plug].filter(Boolean).join(' · ')||'Not selected')+(price>0?' · Total GHS '+formatPrice(discountedLineTotal)+(discountPercentage>0?' · '+formatPrice(discountPercentage)+'% off':''):'');
         });
         if(productCount)productCount.textContent=products.length+(products.length===1?' product':' products');
         updateLiveReceipt(products);
@@ -459,6 +472,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const plugButton=product.querySelector('[data-lookup-button="'+plugSelect.id+'"]');
         if(plugButton){plugButton.disabled=brandSelect.value==='';plugButton.classList.toggle('is-disabled',brandSelect.value==='');}
         product.querySelector('[data-pos-product-price]').value='';
+        product.querySelector('[data-pos-product-discount]').value='0';
         product.querySelector('[data-pos-product-price-history]').value='';
         product.querySelector('[data-pos-product-history]').textContent='No price history available.';
         if(typeof updateLookupButton==='function')updateLookupButton(plugSelect);

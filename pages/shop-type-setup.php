@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
-require_module_access('admin');
+require_menu_item_access('setup_shop_types');
 ensure_destination_visit_schema();
 $pageTitle='Shop Type Setup'; $breadcrumbs=[['label'=>'Home','url'=>app_url('index.php')],['label'=>'Admin','url'=>app_url('admin.php')],['label'=>'Setup','url'=>app_url('setup.php')],['label'=>'Shop Type Setup']]; $message=$error=''; $editId=max(0,(int)($_GET['edit']??0)); $name=''; $status='1';
 if($editId){$s=db()->prepare('SELECT * FROM shop_types WHERE id=?');$s->execute([$editId]);$r=$s->fetch();if($r){$name=(string)$r['shop_type_name'];$status=(string)(int)$r['is_active'];}else{$editId=0;}}

@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
 
-require_module_access('admin');
+require_menu_item_access('setup_roles');
 
 $pageTitle = 'Role Setup';
 $breadcrumbs = [

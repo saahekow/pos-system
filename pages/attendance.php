@@ -33,7 +33,7 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 
     <div class="attendance-actions-row">
-        <?php if (is_admin_user()): ?>
+        <?php if (can_access_menu_item('setup_attendance')): ?>
             <a class="secondary-button" href="<?= e(app_url('attendance-setup.php')) ?>">
                 <i class="fa-solid fa-sliders" aria-hidden="true"></i>
                 <span>Setup</span>

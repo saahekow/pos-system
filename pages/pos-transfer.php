@@ -94,34 +94,26 @@ require_once __DIR__ . '/../includes/header.php';
     <div class="management-heading pos-transfer-heading">
         <div>
             <span class="section-kicker">POS</span>
-            <h1 id="pos-transfer-title">Transfer Goods</h1>
-            <p>Prepare one or more products to be sent to a vendor.</p>
+            <h1 id="pos-transfer-title">To Vendor</h1>
+            <p>Select a vendor, brand, plug number, and quantity. The receipt fills in as you go.</p>
         </div>
         <div class="management-icon"><i class="fa-solid fa-right-left"></i></div>
     </div>
     <?php if($message):?><div class="profile-message is-success"><?=e($message)?></div><?php endif;?>
     <?php if($error):?><div class="profile-message is-error"><?=e($error)?></div><?php endif;?>
 
-    <form class="pos-transfer-form pos-transfer-form--sectioned" method="post" autocomplete="off" data-pos-transfer-form>
+    <form class="pos-transfer-form pos-transfer-form--invoice" method="post" autocomplete="off" data-pos-transfer-form>
         <input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>">
         <div class="pos-transfer-workspace">
         <div class="pos-transfer-entry">
-        <nav class="pos-sales-section-menu pos-transfer-section-menu" aria-label="Transfer entry sections">
-            <button type="button" class="is-active" data-transfer-section-button="date"><i class="fa-solid fa-calendar-day"></i><span>Date</span></button>
-            <button type="button" data-transfer-section-button="vendor"><i class="fa-solid fa-store"></i><span>Vendor</span></button>
-            <button type="button" data-transfer-section-button="product"><i class="fa-solid fa-box"></i><span>Product</span></button>
-            <button type="button" data-transfer-section-button="comment"><i class="fa-solid fa-note-sticky"></i><span>Comment</span></button>
-        </nav>
         <div class="pos-transfer-grid is-active-section" data-transfer-section="date">
             <label class="pos-transfer-field pos-transfer-field--wide" for="transfer_date">
-                <span>Transfer date</span>
-                <input id="transfer_date" name="transfer_date" type="date" value="<?=e(date('Y-m-d'))?>" required>
+                <input id="transfer_date" name="transfer_date" type="date" value="<?=e(date('Y-m-d'))?>" aria-label="Transfer date" required>
             </label>
         </div>
         <div class="pos-transfer-grid" data-transfer-section="vendor">
             <label class="pos-transfer-field pos-transfer-field--wide" for="transfer_vendor">
-                <span>Vendor</span>
-                <select id="transfer_vendor" name="vendor_id" data-vendor-selector data-popup-select data-popup-search data-popup-hide-empty required>
+                <select id="transfer_vendor" name="vendor_id" aria-label="Vendor" data-vendor-selector data-popup-select data-popup-search data-popup-hide-empty required>
                     <option value="">Search or select vendor</option>
                     <?php foreach ($vendors as $vendor): ?>
                         <option value="<?= (int) $vendor['id'] ?>"><?= e(implode(' · ', array_filter([(string) $vendor['vendor_name'], (string) ($vendor['phone'] ?? '')]))) ?></option>
@@ -132,14 +124,9 @@ require_once __DIR__ . '/../includes/header.php';
 
         <div class="pos-transfer-products" data-transfer-section="product">
             <div class="pos-transfer-products__heading">
-                <div><span class="section-kicker">Products</span><strong data-transfer-product-count>1 product</strong></div>
                 <button class="secondary-button pos-transfer-add" type="button" data-transfer-add><i class="fa-solid fa-plus"></i><span>Add Product</span></button>
             </div>
             <div class="pos-transfer-product-list" data-transfer-product-list></div>
-            <div class="pos-transfer-total" aria-live="polite">
-                <span>Transfer total</span>
-                <strong data-transfer-total>GH&#8373; 0.00</strong>
-            </div>
         </div>
 
         <template data-transfer-product-template>
@@ -156,8 +143,7 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
                 <div class="pos-transfer-product__fields">
                     <label class="pos-transfer-field pos-transfer-field--wide">
-                        <span>Spark plug brand</span>
-                        <select name="products[brand][]" data-transfer-brand data-popup-select data-popup-search data-popup-hide-empty required>
+                        <select name="products[brand][]" aria-label="Spark plug brand" data-transfer-brand data-popup-select data-popup-search data-popup-hide-empty required>
                             <option value="">Search or select brand</option>
                             <?php foreach ($plugBrands as $brand): ?>
                                 <option value="<?= e((string) $brand['brand_name']) ?>"><?= e((string) $brand['brand_name']) ?></option>
@@ -165,8 +151,7 @@ require_once __DIR__ . '/../includes/header.php';
                         </select>
                     </label>
                     <label class="pos-transfer-field pos-transfer-field--wide">
-                        <span>Plug number</span>
-                        <select name="products[spark_plug_id][]" data-transfer-plug data-popup-select data-popup-search data-popup-hide-empty data-popup-empty-text="No plug numbers are available for the selected brand." required>
+                        <select name="products[spark_plug_id][]" aria-label="Plug number" data-transfer-plug data-popup-select data-popup-search data-popup-hide-empty data-popup-empty-text="No plug numbers are available for the selected brand." required>
                             <option value="">Search or select plug number</option>
                             <?php foreach ($sparkPlugs as $plug): ?>
                                 <option value="<?= (int) $plug['id'] ?>" data-brand="<?= e(strtolower(trim((string) $plug['brand_name']))) ?>" data-current-price="<?= e((string) ($plug['current_price'] ?? '')) ?>" data-price-history-id="<?= e((string) ($plug['price_history_id'] ?? '')) ?>" hidden disabled><?= e((string) $plug['plug_number']) ?></option>
@@ -174,19 +159,17 @@ require_once __DIR__ . '/../includes/header.php';
                         </select>
                     </label>
                     <label class="pos-transfer-field">
-                        <span>Quantity (boxes)</span>
-                        <input name="products[box_quantity][]" type="number" min="1" step="1" inputmode="numeric" placeholder="0" data-transfer-quantity required>
+                        <input name="products[box_quantity][]" type="number" min="1" step="1" inputmode="numeric" placeholder="Quantity (boxes)" aria-label="Quantity in boxes" data-transfer-quantity required>
                     </label>
                     <label class="pos-transfer-field">
-                        <span>Wholesale price per piece</span>
-                        <div class="pos-transfer-money"><span>GH&#8373;</span><input name="products[unit_price][]" type="number" min="0" step="0.01" placeholder="0.00" data-transfer-unit-price readonly><input name="products[price_history_id][]" type="hidden" data-transfer-price-history></div>
+                        <div class="pos-transfer-money"><span>GH&#8373;</span><input name="products[unit_price][]" type="number" min="0" step="0.01" placeholder="Wholesale price per piece" aria-label="Wholesale price per piece" data-transfer-unit-price readonly><input name="products[price_history_id][]" type="hidden" data-transfer-price-history></div>
                     </label>
                 </div>
                 <div class="pos-transfer-line-total"><span><small>Pieces</small><strong data-transfer-piece-count>0 pieces</strong><em>4 per box</em></span><span><small>Line total</small><strong data-transfer-line-total>GH&#8373; 0.00</strong><em>At wholesale price</em></span></div>
             </article>
         </template>
 
-        <div class="pos-transfer-note" data-transfer-section="comment"><label for="transfer_note">Note <span>(optional)</span></label><textarea id="transfer_note" name="note" rows="3" placeholder="Add a transfer note"></textarea></div>
+        <div class="pos-transfer-note" data-transfer-section="comment"><textarea id="transfer_note" name="note" rows="3" placeholder="Add a transfer note (optional)" aria-label="Transfer note"></textarea></div>
 
         <div class="form-actions pos-transfer-actions">
             <a class="secondary-button" href="<?= e(app_url('pos.php')) ?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a>
@@ -194,11 +177,11 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
         </div>
         <aside class="pos-transfer-live-receipt" aria-live="polite" aria-labelledby="transfer-live-receipt-title">
-            <div class="pos-transfer-live-receipt__head"><div><span class="section-kicker">Live receipt</span><strong id="transfer-live-receipt-title">Transfer receipt</strong></div><strong data-transfer-receipt-total>GH₵ 0.00</strong></div>
+            <div class="pos-transfer-live-receipt__head"><div><span class="section-kicker">Live receipt</span><strong id="transfer-live-receipt-title">Transfer Invoice</strong></div><strong data-transfer-receipt-total>GH₵ 0.00</strong></div>
             <div class="pos-transfer-live-receipt__meta"><span><small>Transfer date</small><strong data-transfer-receipt-date>Not selected</strong></span><span><small>Vendor</small><strong data-transfer-receipt-vendor>Vendor not selected</strong></span></div>
-            <div class="pos-transfer-live-receipt__table"><table><thead><tr><th>Product</th><th>Boxes</th><th>Pieces</th><th>Wholesale</th><th>Amount</th></tr></thead><tbody data-transfer-receipt-items><tr><td colspan="5">Add a product to build the receipt.</td></tr></tbody></table></div>
+            <div class="pos-transfer-live-receipt__table"><table><thead><tr><th>Brand / Plug</th><th>Boxes</th><th>Pieces</th><th>Price</th><th>Amount</th></tr></thead><tbody data-transfer-receipt-items><tr><td colspan="5">Select a product to build the receipt.</td></tr></tbody></table></div>
             <div class="pos-transfer-live-receipt__note" data-transfer-receipt-note-row hidden><small>Note</small><p data-transfer-receipt-note></p></div>
-            <dl class="pos-transfer-live-receipt__totals"><div class="is-net"><dt>Transfer total</dt><dd data-transfer-receipt-net>GH₵ 0.00</dd></div></dl>
+            <dl class="pos-transfer-live-receipt__totals"><div class="is-net"><dt>Total</dt><dd data-transfer-receipt-net>GH₵ 0.00</dd></div></dl>
         </aside>
         </div>
     </form>
@@ -251,7 +234,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (receiptItems) {
             receiptItems.replaceChildren();
             if (!receiptRows.length) {
-                const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=5;cell.textContent='Add a product to build the receipt.';row.appendChild(cell);receiptItems.appendChild(row);
+                const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=5;cell.textContent='Select a product to build the receipt.';row.appendChild(cell);receiptItems.appendChild(row);
             } else receiptRows.forEach(function (item) {
                 const row=document.createElement('tr');[item.product,item.boxes.toLocaleString('en-GH'),item.pieces.toLocaleString('en-GH'),money(item.unitPrice),money(item.amount)].forEach(function(value){const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);});receiptItems.appendChild(row);
             });

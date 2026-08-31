@@ -65,7 +65,7 @@ if ($view === 'menu') {
         };
         $cards[]=['title'=>$title,'description'=>'Open the available '.strtolower($title).' records and reporting tools.','icon'=>$icon,'url'=>$url];
     }
-    if (can_access_module('customer_followup')) {
+    if (current_user_role()==='staff' || can_access_module('customer_followup')) {
         $cards[]=['title'=>'Follow-up Reports','description'=>'Review customer phone-call and physical-visit follow-ups.','icon'=>'fa-solid fa-clipboard-check','url'=>app_url('reports.php?report=followup&return_to='.rawurlencode(app_url('marketing.php?view=reports')))];
     }
 } elseif ($view === 'admin') {

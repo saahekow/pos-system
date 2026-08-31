@@ -4942,6 +4942,43 @@ button.active-trip-flow-action.is-selected {
     }
 }
 
+@media (min-width: 681px) {
+    .app-page--internal .registration-records-table-wrap {
+        position: relative;
+        max-height: calc(100dvh - 270px);
+        overflow: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: #aaa977 transparent;
+    }
+
+    .app-page--internal .registration-records-table {
+        overflow: visible !important;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .app-page--internal .registration-records-table-wrap::-webkit-scrollbar {
+        width: 7px;
+        height: 7px;
+    }
+
+    .app-page--internal .registration-records-table-wrap::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: #aaa977;
+    }
+
+    .app-page--internal .registration-records-table thead th {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 10;
+        background: #d4d3a6 !important;
+        box-shadow: inset 0 -1px #aaa977;
+    }
+
+    .app-page--internal .registration-records-table thead { position: static; }
+}
+
 .customer-place-flow .visit-arrival-field {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
@@ -5474,49 +5511,119 @@ button.active-trip-flow-action.is-selected {
 }
 
 .trip-token-picker {
-    overflow: hidden;
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: visible;
+    box-sizing: border-box;
     border: 1px solid rgba(90, 114, 151, 0.18);
     border-radius: 14px;
     background: var(--white);
 }
 
+.trip-token-picker.is-open {
+    z-index: 40;
+}
+
 .trip-token-picker__control {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 6px;
+    height: 50px;
+    min-height: 50px;
     padding: 8px;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 
 .trip-token-picker__control input {
-    flex: 1 1 150px;
-    min-width: 120px;
+    width: 0 !important;
+    min-width: 96px;
+    max-width: 100%;
+    height: 32px;
+    min-height: 32px !important;
+    flex: 1 1 110px;
+    padding: 0 4px !important;
+    overflow: hidden;
     border: 0;
     outline: 0;
     box-shadow: none;
 }
 
-.trip-token-picker__tokens { display: flex; flex-wrap: wrap; gap: 6px; }
+.trip-token-picker__tokens {
+    display: flex;
+    width: auto;
+    flex: 0 1 calc(100% - 102px);
+    flex-wrap: nowrap;
+    gap: 5px;
+    max-width: calc(100% - 102px);
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+}
+
+.form-field:has(> .trip-token-picker) {
+    min-width: 0;
+}
+
+.trip-token-picker__tokens::-webkit-scrollbar { display: none; }
 
 .trip-token-picker__token {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 8px 5px 10px;
+    flex: 0 0 auto;
+    gap: 5px;
+    max-width: 165px;
+    min-height: 26px;
+    padding: 3px 7px 3px 9px;
     border-radius: 999px;
     color: var(--blue-800);
     background: rgba(36, 94, 216, 0.11);
-    font-size: 0.83rem;
+    font-size: 0.72rem;
     font-weight: 700;
+    line-height: 1.25;
+    white-space: nowrap;
 }
 
-.trip-token-picker__token button { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; }
+.trip-token-picker__token > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.trip-token-picker__token button {
+    width: 16px;
+    min-width: 16px;
+    height: 16px;
+    min-height: 16px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 16px;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
+    line-height: 1;
+    cursor: pointer;
+}
 
 .trip-token-picker__options {
+    position: absolute;
+    z-index: 41;
+    top: calc(100% + 6px);
+    right: 0;
+    left: 0;
     display: none;
     max-height: 180px;
     overflow-y: auto;
-    border-top: 1px solid rgba(90, 114, 151, 0.12);
+    border: 1px solid rgba(90, 114, 151, 0.18);
+    border-radius: 10px;
+    background: var(--white);
+    box-shadow: 0 12px 28px rgba(48, 48, 31, .18);
 }
 
 .trip-token-picker.is-open .trip-token-picker__options { display: grid; }
@@ -12385,6 +12492,14 @@ body,
     background-image: none !important;
 }
 
+/* Keep dashboard menus light by removing the deep outer panel behind the cards. */
+.dashboard {
+    border-color: transparent !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
 input,
 select,
 textarea,
@@ -13038,6 +13153,68 @@ textarea,
     box-shadow: none !important;
 }
 
+/* Transfer invoice workspace: cream, white, black, and muted olive. */
+.app-page--internal .pos-transfer-panel { max-width:1320px;padding:0;border:0!important;border-radius:0;background:transparent!important;background-image:none!important;box-shadow:none!important; }
+.pos-transfer-form--invoice .pos-transfer-workspace { grid-template-columns:minmax(330px,.72fr) minmax(560px,1.28fr);gap:34px;padding:22px 28px 28px; }
+.pos-transfer-form--invoice .pos-transfer-entry { min-width:0;padding:4px 0; }
+.pos-transfer-form--invoice [data-transfer-section] { display:block; }
+.pos-transfer-form--invoice .pos-transfer-grid { grid-template-columns:1fr;gap:12px;padding:0 0 14px; }
+.pos-transfer-form--invoice .pos-transfer-products { padding:4px 0 0; }
+.pos-transfer-form--invoice .pos-transfer-products__heading { align-items:end; }
+.pos-transfer-form--invoice .pos-transfer-products__heading .pos-transfer-add { margin-left:auto; }
+.pos-transfer-form--invoice .pos-transfer-products__heading > div small { color:#69694d;font-size:.7rem; }
+.pos-transfer-form--invoice .pos-transfer-product { overflow:visible;border:0!important;border-radius:0;background:transparent!important;background-image:none!important;box-shadow:none!important; }
+.pos-transfer-form--invoice .pos-transfer-product + .pos-transfer-product { margin-top:18px;padding-top:18px;border-top:1px solid #c8c798; }
+.pos-transfer-form--invoice .pos-transfer-product:not(.is-collapsed) > .pos-transfer-product__head { display:none; }
+.pos-transfer-form--invoice .pos-transfer-product.is-collapsed { overflow:hidden;border:1px solid #c8c798;border-radius:7px;background:rgba(255,255,255,.28); }
+.pos-transfer-form--invoice .pos-transfer-product.is-collapsed + .pos-transfer-product { margin-top:12px;padding-top:0;border-top:0; }
+.pos-transfer-form--invoice .pos-transfer-product.is-collapsed .pos-transfer-product__head { min-height:48px;border:0;background:transparent; }
+.pos-transfer-form--invoice .pos-transfer-product.is-collapsed .pos-transfer-product__identity > strong { color:#111; }
+.pos-transfer-form--invoice .pos-transfer-product.is-collapsed .pos-transfer-product__identity > small { color:#69694d; }
+.pos-transfer-form--invoice .pos-transfer-product.is-collapsed .pos-transfer-edit { color:#fff;background:#111; }
+.pos-transfer-form--invoice .pos-transfer-product__fields { grid-template-columns:1fr;padding:0; }
+.pos-transfer-form--invoice .pos-transfer-line-total { margin-top:14px;padding:0;border:0;border-top:1px solid #bdbc8d;border-bottom:1px solid #bdbc8d;border-radius:0;background:transparent; }
+.pos-transfer-form--invoice .pos-transfer-line-total > span { padding:13px 8px; }
+.pos-transfer-form--invoice .pos-transfer-line-total > span + span { border-left:1px solid #c8c798; }
+.pos-transfer-form--invoice .pos-transfer-line-total small { color:#77784f;font-size:.58rem;letter-spacing:.09em; }
+.pos-transfer-form--invoice .pos-transfer-line-total strong { color:#111;font-size:1rem; }
+.pos-transfer-form--invoice .pos-transfer-line-total em { color:#858563;font-size:.56rem; }
+.pos-transfer-form--invoice .pos-transfer-field > input,
+.pos-transfer-form--invoice .pos-transfer-field > select,
+.pos-transfer-form--invoice .pos-transfer-money,
+.pos-transfer-form--invoice .pos-transfer-field .form-lookup-button,
+.pos-transfer-form--invoice .pos-transfer-note textarea { border-color:#cfceb0;border-radius:5px;background:#fff!important;background-image:none!important; }
+.pos-transfer-form--invoice .pos-transfer-money input,
+.pos-transfer-form--invoice .pos-transfer-money input[readonly] { min-width:0;background:transparent!important;background-image:none!important;box-shadow:none!important; }
+.pos-transfer-form--invoice .pos-transfer-money input::placeholder { color:#777765;font-weight:500;opacity:1; }
+.pos-transfer-form--invoice .pos-transfer-note textarea { min-height:88px;padding:13px 14px;border-color:#c5c493;background:#fff!important;box-shadow:none;font-size:.88rem; }
+.pos-transfer-form--invoice .pos-transfer-note textarea::placeholder { color:#777765; }
+.pos-transfer-form--invoice .pos-transfer-note textarea:focus { border-color:#77784f;background:#fff;box-shadow:0 0 0 3px rgba(119,120,79,.13); }
+.pos-transfer-form--invoice .pos-transfer-add,
+.pos-transfer-form--invoice .login-button { border-color:#111;color:#fff;background:#111; }
+.pos-transfer-form--invoice .pos-transfer-total { margin:18px 0 0;padding:15px 4px;border-top:2px solid #111;border-bottom:2px solid #111;border-radius:0;color:#111;background:transparent;box-shadow:none; }
+.pos-transfer-form--invoice .pos-transfer-total span { font-size:.72rem;letter-spacing:.1em; }
+.pos-transfer-form--invoice .pos-transfer-total strong { font-size:1.45rem;letter-spacing:-.03em; }
+.pos-transfer-form--invoice .pos-transfer-note { margin:18px 0 0; }
+.pos-transfer-form--invoice .pos-transfer-actions { padding:16px 0 0; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt { position:sticky;top:18px;min-height:520px;margin:0;border:0;border-radius:0;background:#fff;box-shadow:0 10px 25px rgba(65,65,39,.12); }
+.pos-transfer-form--invoice .pos-transfer-live-receipt__head { justify-content:center;padding:34px 20px 18px;color:#171717;background:#fff;text-align:center; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt__head > div { gap:5px; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt__head .section-kicker { color:#77784f; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt__head > strong { position:absolute;right:22px;margin-top:2px;font-size:.78rem; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt__meta { margin:0 16px;border:1px solid #e3e3dc; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt__table { max-height:310px;padding:12px 16px; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt th { color:#222;background:#f0f0f0; }
+.pos-transfer-form--invoice .pos-transfer-live-receipt__totals .is-net { padding:14px 12px;border-top:2px solid #111;border-bottom:2px solid #111;color:#111;font-size:1.05rem;text-transform:uppercase; }
+@media (max-width:980px) {
+    .pos-transfer-form--invoice .pos-transfer-workspace { grid-template-columns:1fr;gap:18px;padding:18px; }
+    .pos-transfer-form--invoice .pos-transfer-live-receipt { position:static;margin:0; }
+}
+@media (max-width:560px) {
+    .pos-transfer-form--invoice .pos-transfer-workspace { padding:10px; }
+    .pos-transfer-form--invoice .pos-transfer-live-receipt__head > strong { position:static; }
+}
+
 .app-page--internal :is(.pos-transfer-workspace, .pos-transfer-entry) {
     background: transparent !important;
 }
@@ -13045,4 +13222,558 @@ textarea,
 .app-page--internal .pos-transfer-live-receipt {
     background: #fff !important;
     box-shadow: none !important;
+}
+
+/* Shared flat-workspace design language for internal application pages. */
+.app-page--internal .app-main > :is(
+    .content-panel,
+    .management-panel,
+    .form-panel,
+    .customer-place-flow,
+    .pos-report-page,
+    .pos-sales-page,
+    .attendance-page,
+    .dashboard
+) {
+    border-color: transparent !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal :is(
+    .record-form,
+    .pos-transfer-form,
+    .pos-sales-form,
+    .filter-bar,
+    .pos-report-filter
+) {
+    background-image: none !important;
+}
+
+.app-page--internal :is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]),
+    select,
+    textarea,
+    .form-lookup-button,
+    .pos-sales-combobox,
+    .pos-transfer-money,
+    .readonly-value
+) {
+    border-color: #c3c293 !important;
+    background-color: #fff !important;
+    background-image: none !important;
+    box-shadow: none;
+}
+
+.app-page--internal :is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"]),
+    select,
+    textarea,
+    .form-lookup-button
+):focus,
+.app-page--internal :is(.pos-sales-combobox, .pos-transfer-money):focus-within {
+    border-color: #77784f !important;
+    box-shadow: 0 0 0 3px rgba(119,120,79,.13) !important;
+    outline: 0;
+}
+
+.app-page--internal :is(
+    .data-table-wrap,
+    .table-wrap,
+    .staff-modal,
+    .followup-method-dialog,
+    .pos-receipt,
+    .pos-transfer-receipt,
+    .pos-sales-live-receipt
+) {
+    background-color: #fff !important;
+    background-image: none !important;
+}
+
+/* Always-open registration/location forms belong directly on the page surface. */
+.app-page--internal .record-form > .place-workspace--new,
+.app-page--internal .place-workspace--new > .registration-accordion:not(details),
+.app-page--internal .place-workspace--new > .registration-accordion:not(details) > .registration-accordion__body,
+.app-page--internal .place-workspace--new > .registration-accordion:not(details) .form-grid {
+    border-color: transparent !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .place-workspace--new > .registration-accordion:not(details) {
+    padding: 0;
+}
+
+@media (max-width: 680px) {
+    .app-page--internal .registration-records-table-wrap {
+        position: relative;
+        max-height: calc(100dvh - 230px);
+        padding-bottom: 0;
+        overflow: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: #aaa977 transparent;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .app-page--internal .registration-records-table {
+        overflow: visible !important;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .app-page--internal .registration-records-table thead {
+        display: table-header-group;
+        position: static;
+    }
+
+    .app-page--internal .registration-records-table thead th {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 10;
+        background: #d4d3a6 !important;
+        box-shadow: inset 0 -1px #aaa977;
+    }
+
+    .app-page--internal .registration-records-table-wrap::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+
+    .app-page--internal .registration-records-table-wrap::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: #aaa977;
+    }
+}
+
+/* Trip registration: clean, balanced form on the shared page surface. */
+.app-page--internal .sales-step-form {
+    display: grid;
+    gap: 20px;
+    padding: 0;
+    border: 0;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .sales-step-form .sales-step-card__header--plain {
+    margin: 0;
+    padding: 0 0 16px;
+    border-bottom: 1px solid #c8c798;
+    background: transparent !important;
+}
+
+.app-page--internal .sales-step-form .sales-step-card__header--plain h2 {
+    margin: 0;
+    color: #111;
+    font-size: 1.35rem;
+    letter-spacing: -.02em;
+}
+
+.app-page--internal .sales-step-form .sales-step-card__header--plain p {
+    max-width: 680px;
+    margin: 5px 0 0;
+    color: #62624d;
+    font-size: .86rem;
+}
+
+.app-page--internal .sales-step-form .form-grid {
+    gap: 16px 18px;
+}
+
+.app-page--internal .sales-step-form .form-field {
+    gap: 7px;
+}
+
+.app-page--internal .sales-step-form .form-field > label {
+    color: #454630;
+    font-size: .7rem;
+    font-weight: 850;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+}
+
+.app-page--internal .sales-step-form .form-field > label .muted-text {
+    color: #77784f !important;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.app-page--internal .sales-step-form :is(
+    .form-field > input,
+    .form-field > select,
+    .form-lookup-button,
+    .trip-token-picker,
+    .field-control-row > input
+) {
+    min-height: 52px;
+    border-color: #c3c293 !important;
+    border-radius: 10px;
+    background: #fff !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .sales-step-form .trip-token-picker {
+    overflow: visible;
+}
+
+.app-page--internal .sales-step-form .trip-token-picker__control {
+    min-height: 50px;
+    padding: 7px 12px;
+}
+
+.app-page--internal .sales-step-form #staff_ids,
+.app-page--internal .sales-step-form #vendor_ids,
+.app-page--internal .sales-step-form #staff_ids:focus,
+.app-page--internal .sales-step-form #vendor_ids:focus {
+    min-height: 0;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    outline: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .sales-step-form .trip-token-picker:focus-within {
+    border-color: #77784f !important;
+    box-shadow: 0 0 0 3px rgba(119,120,79,.13) !important;
+}
+
+.app-page--internal .sales-step-form .form-actions {
+    margin-top: 2px;
+    padding: 16px 0 0;
+    border-top: 1px solid #c8c798;
+}
+
+.app-page--internal .sales-step-form .form-actions .login-button {
+    border-color: #111;
+    color: #fff;
+    background: #111;
+    box-shadow: none;
+}
+
+.app-page--internal .sales-step-form .form-actions .secondary-button {
+    border-color: #c3c293;
+    color: #454630;
+    background: #fff;
+    box-shadow: none;
+}
+
+@media (max-width: 760px) {
+    .app-page--internal .sales-step-form { gap: 15px; }
+    .app-page--internal .sales-step-form .form-grid { grid-template-columns: 1fr;gap: 13px; }
+    .app-page--internal .sales-step-form :is(
+        .form-field > input,
+        .form-field > select,
+        .form-lookup-button,
+        .trip-token-picker,
+        .field-control-row > input
+    ) {
+        min-height: 46px;
+        padding-right: 2px;
+        padding-left: 2px;
+        border-width: 0 0 1px !important;
+        border-style: solid !important;
+        border-color: #aaa977 !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        background-image: none !important;
+        box-shadow: none !important;
+    }
+    .app-page--internal .sales-step-form .trip-token-picker__control { min-height:45px;padding:5px 2px; }
+    .app-page--internal .sales-step-form .trip-token-picker:focus-within,
+    .app-page--internal .sales-step-form :is(.form-field > input,.form-field > select,.form-lookup-button,.field-control-row > input):focus {
+        border-color:#555633 !important;
+        box-shadow:none !important;
+    }
+    .app-page--internal .sales-step-form .form-actions { display:grid;grid-template-columns:1fr 1fr; }
+    .app-page--internal .sales-step-form .form-actions > * { width:100%;justify-content:center; }
+}
+
+/* Polished filters and results for visit/follow-up report listings. */
+.app-page--internal [data-report-listing] .report-filter-form {
+    margin: 0 0 14px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.app-page--internal [data-report-listing] .report-filter-panel {
+    gap: 12px 10px;
+}
+
+.app-page--internal [data-report-listing] .report-search-field {
+    border-color: #c3c293;
+    background: #fff !important;
+    background-image: none !important;
+    box-shadow: none;
+}
+
+.app-page--internal [data-report-listing] .report-search-field input,
+.app-page--internal [data-report-listing] .report-search-field input:focus {
+    width: 100%;
+    min-height: 0;
+    height: auto;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    outline: 0 !important;
+    appearance: none;
+}
+
+.app-page--internal #report_search,
+.app-page--internal #report_search:hover,
+.app-page--internal #report_search:focus,
+.app-page--internal #report_search:focus-visible {
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    outline: 0 !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    appearance: none;
+}
+
+.app-page--internal [data-report-listing] .report-search-field:focus-within {
+    border-color: #77784f;
+    box-shadow: 0 0 0 3px rgba(119,120,79,.13);
+}
+
+.app-page--internal [data-report-listing] .report-filter-panel .form-field {
+    gap: 6px;
+}
+
+.app-page--internal [data-report-listing] :is(
+    .report-filter-panel select,
+    .report-filter-panel input[type="date"],
+    .report-filter-panel .form-lookup-button,
+    .report-filter-panel .report-lookup-button
+) {
+    width: 100%;
+    min-height: 50px;
+    border: 1px solid #c3c293 !important;
+    border-radius: 10px;
+    background: #fff !important;
+    background-image: none !important;
+    color: #111;
+    box-shadow: none !important;
+}
+
+.app-page--internal [data-report-listing] .report-filter-panel .report-date-field label {
+    color: #77784f;
+    font-size: .66rem;
+    letter-spacing: .09em;
+}
+
+.app-page--internal [data-report-listing] .report-result-count {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    margin: 0 0 10px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    color: #46472f;
+    background: #d4d3a6;
+    font-size: .76rem;
+    font-weight: 750;
+}
+
+.app-page--internal [data-report-listing] [data-report-results] {
+    border: 1px solid #c8c798;
+    border-radius: 0;
+    background: #eeeed0 !important;
+}
+
+.app-page--internal [data-report-listing] .data-table--report-retailers tbody td {
+    background: #eeeed0 !important;
+}
+
+.app-page--internal [data-report-listing] .data-table--report-retailers tbody tr:nth-child(even) td {
+    background: #eeeed0 !important;
+}
+
+.app-page--internal [data-report-listing] .data-table--report-retailers th,
+.app-page--internal [data-report-listing] .data-table--report-retailers td {
+    padding: 15px 16px;
+    border-bottom: 1px solid #cecd9e;
+    vertical-align: middle;
+}
+
+.app-page--internal [data-report-listing] .data-table--report-retailers th {
+    padding-top: 11px;
+    padding-bottom: 11px;
+    color: #303126;
+    background: #d4d3a6 !important;
+    font-size: .67rem;
+    letter-spacing: .06em;
+}
+
+.app-page--internal [data-report-listing] .data-table--report-retailers tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.app-page--internal [data-report-listing] .data-table--report-retailers tbody tr:hover td {
+    background: #e5e4be !important;
+}
+
+.app-page--internal [data-report-listing] .data-table--report-retailers td a,
+.app-page--internal [data-report-listing] .data-table--report-retailers td strong {
+    font-weight: 800;
+}
+
+@media (max-width: 680px) {
+    .app-page--internal [data-report-listing] .report-filter-panel { grid-template-columns: 1fr; }
+}
+
+/* Visit-summary reports use the page surface with white record rows. */
+.app-page--internal .visit-summary-trip,
+.app-page--internal .visit-summary-trip__body,
+.app-page--internal .visit-summary-place-stack {
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .visit-summary-trip {
+    border-color: #aaa977 !important;
+}
+
+.app-page--internal .visit-summary-trip__overview > div {
+    background: #fff !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .visit-summary-customer {
+    background: #eeeed0 !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .visit-summary-customer:hover {
+    background: #e5e4be !important;
+}
+
+.app-page--internal .visit-summary-place,
+.app-page--internal .visit-summary-place > summary {
+    background: #eeeed0 !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .visit-summary-place__body {
+    background: #d9d8ad !important;
+    background-image: none !important;
+}
+
+.app-page--internal .pos-sales-form {
+    padding-right: 0;
+    padding-left: 0;
+    border: 0 !important;
+    border-radius: 0;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .pos-sales-form--sectioned > .pos-sales-field > .pos-sales-field__body,
+.app-page--internal .pos-sales-form--sectioned .pos-sale-products {
+    border-color: transparent !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .pos-sales-form--sectioned :is(
+    .pos-customer-mode,
+    .pos-sales-section-menu,
+    .pos-sales-actions,
+    .pos-sales-field
+) {
+    border-color: transparent !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+.app-page--internal .pos-sales-form--sectioned .pos-customer-mode,
+.app-page--internal .pos-sales-form--sectioned .pos-sales-section-menu {
+    border-bottom: 1px solid #c8c798 !important;
+}
+
+.app-page--internal .pos-sales-form--sectioned .pos-sales-actions {
+    padding-right: 0;
+    padding-left: 0;
+}
+
+/* Consistent contained scrolling for report and management data tables. */
+.app-page--internal .table-wrap:has(> .data-table),
+.app-page--internal .data-table-wrap:has(> .data-table),
+.app-page--internal .pos-report-results {
+    position: relative;
+    max-height: calc(100dvh - 270px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #aaa977 transparent;
+    -webkit-overflow-scrolling: touch;
+}
+
+.app-page--internal :is(.table-wrap, .data-table-wrap, .pos-report-results) > .data-table {
+    overflow: visible !important;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.app-page--internal :is(.table-wrap, .data-table-wrap, .pos-report-results) > .data-table thead th {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10;
+    background: #d4d3a6 !important;
+    box-shadow: inset 0 -1px #aaa977;
+}
+
+.app-page--internal :is(.table-wrap, .data-table-wrap, .pos-report-results)::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+}
+
+.app-page--internal :is(.table-wrap, .data-table-wrap, .pos-report-results)::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #aaa977;
+}
+
+@media (max-width: 680px) {
+    .app-page--internal .table-wrap:has(> .data-table),
+    .app-page--internal .data-table-wrap:has(> .data-table),
+    .app-page--internal .pos-report-results {
+        max-height: calc(100dvh - 230px);
+    }
+}
+
+/* Trip > Promo Plug uses the shared page canvas without a deep workspace. */
+.app-page--internal .customer-place-flow .place-workspace--promo-entry,
+.app-page--internal .customer-place-flow .place-workspace--promo-entry > .record-form {
+    border-color: transparent !important;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+/* Staff assignment records use one consistent row surface. */
+.app-page--internal .staff-menu-access-table tbody tr > td,
+.app-page--internal .staff-menu-access-table tbody tr:nth-child(even) > td,
+.app-page--internal .staff-menu-access-table tbody tr:hover > td {
+    background: #eeeed0 !important;
 }

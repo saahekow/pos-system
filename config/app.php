@@ -786,6 +786,13 @@ function ensure_customer_promo_plug_schema(): void
                recorded_by_user_id,created_at,updated_at
         FROM customer_promo_plugs");
     });
+    run_app_migration('20260828_repair_customer_sales_view_definer', function (): void {
+        db()->exec("CREATE OR REPLACE ALGORITHM=UNDEFINED SQL SECURITY INVOKER VIEW customer_sales AS
+            SELECT id,CONCAT('PROMO-',id) AS sale_record_ref,visit_id,customer_id,bus_loc_id,
+                   NULL AS sales_ref,promo_plug,0 AS sale_confirmed,NULL AS car_picture,
+                   recorded_by_user_id,created_at,updated_at
+            FROM customer_promo_plugs");
+    });
     $schemaReady = true;
 }
 
@@ -2309,23 +2316,24 @@ function ensure_vendor_module_assignments_schema(): void
 
 function assigned_module_keys_for_vendor(int $vendorId): array
 {
-    ensure_vendor_module_assignments_schema();
-    $statement = db()->prepare(
-        'SELECT module_key
-         FROM vendor_module_assignments
-         WHERE vendor_id = ? AND is_active = 1'
-    );
-    $statement->execute([$vendorId]);
+    if ($vendorId < 1) return [];
 
-    return array_values(array_unique(array_merge(
-        ['customer_followup', 'vendor_reports', 'vendor_personnel'],
-        array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN))
-    )));
+    // Vendor access is role-based. Data Management (vin_search) is
+    // intentionally excluded and town/customer access is enforced separately.
+    return [
+        'customer_visit',
+        'customer_followup',
+        'vendor_customers',
+        'pos',
+        'registration_records',
+        'vendor_reports',
+        'vendor_personnel',
+    ];
 }
 
 function vendor_assignable_module_keys(): array
 {
-    return ['customer_visit','customer_followup','vendor_customers','pos','vin_search','registration_records','vendor_reports'];
+    return [];
 }
 
 function ensure_vendor_town_assignments_schema(): void
@@ -2431,6 +2439,7 @@ function staff_child_menu_definitions(): array
         'setup_staff'=>['group'=>'Setup','title'=>'Staff Setup','description'=>'Manage staff profiles and team records.','icon'=>'fa-solid fa-id-card-clip'],
         'data_vin_search_1'=>['group'=>'Data Management','title'=>'VIN Search 1','description'=>'Use the current VIN Search service.','icon'=>'fa-solid fa-barcode'],
         'data_reports'=>['group'=>'Data Management','title'=>'Reports','description'=>'Review saved VIN searches.','icon'=>'fa-solid fa-chart-column'],
+        'marketing_customer_followup'=>['group'=>'Marketing '.html_entity_decode('&#8212;').' Trip','title'=>'Customer Follow-up','description'=>'Find customers and record phone or physical follow-ups.','icon'=>'fa-solid fa-clipboard-check'],
     ];
 }
 
@@ -2467,7 +2476,7 @@ function can_access_menu_item(string $key): bool
     if(current_user_role()==='staff'&&current_user_has_child_menu_assignments())return in_array($key,$assigned,true);
     $legacy=[
         'marketing_trip_registration'=>['sales_trip'],'marketing_location_registration'=>['sales_trip','customer_visit'],'marketing_customer'=>['sales_trip','customer_visit'],
-        'marketing_sales'=>['pos'],'marketing_promo_plug'=>['sales_trip','customer_visit'],
+        'marketing_sales'=>['pos'],'marketing_promo_plug'=>['sales_trip','customer_visit'],'marketing_customer_followup'=>['customer_followup'],
         'marketing_report_trip'=>['reports'],'marketing_report_location'=>['reports'],'marketing_report_customer'=>['reports'],'marketing_report_notes'=>['reports'],'marketing_report_promo'=>['reports'],'marketing_report_vendors'=>['reports'],
         'pos_shop_sales'=>['pos'],'pos_trip_sales'=>['pos'],'pos_promo'=>['pos'],'pos_transfer'=>['pos'],'pos_refund'=>['pos'],'pos_audit'=>['pos'],'pos_reports'=>['pos'],
         'admin_vehicle_log'=>['vehicle_log'],'admin_reports'=>['reports'],
@@ -2503,7 +2512,7 @@ function can_access_module(string $moduleKey): bool
     }
     if(current_user_role()==='staff'&&current_user_has_child_menu_assignments()){
         $childMap=[
-            'sales_trip'=>['marketing_trip_registration'],'customer_visit'=>['marketing_location_registration','marketing_customer','marketing_promo_plug'],
+            'sales_trip'=>['marketing_trip_registration'],'customer_visit'=>['marketing_location_registration','marketing_customer','marketing_promo_plug'],'customer_followup'=>['marketing_customer_followup'],
             'pos'=>['marketing_sales','pos_shop_sales','pos_trip_sales','pos_promo','pos_transfer','pos_refund','pos_audit','pos_reports'],
             'reports'=>['marketing_report_trip','marketing_report_location','marketing_report_customer','marketing_report_notes','marketing_report_promo','marketing_report_vendors','admin_reports'],
             'vehicle_log'=>['admin_vehicle_log'],'vin_search'=>['data_vin_search_1','data_reports'],
@@ -2518,8 +2527,8 @@ function can_access_module(string $moduleKey): bool
         return current_user_id() !== null;
     }
 
-    if (current_user_role() === 'staff' && $moduleKey === 'customer_followup') {
-        return current_staff_id() !== null;
+    if ($moduleKey === 'customer_followup') {
+        return current_user_id() !== null;
     }
 
     if (current_user_role() === 'vendor' && $moduleKey === 'customer_visit') {

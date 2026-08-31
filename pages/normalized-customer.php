@@ -947,7 +947,7 @@ require_once __DIR__ . '/../includes/header.php';
 
     <?php if ($stage === 'new-place' && !$activeSession): ?>
         <?php if ($promoEntryMenu): ?>
-        <div class="place-workspace place-workspace--new">
+        <div class="place-workspace place-workspace--new place-workspace--promo-entry">
             <form class="record-form" method="post">
                 <input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>">
                 <input type="hidden" name="form_action" value="save_standalone_sales">

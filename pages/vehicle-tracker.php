@@ -8,7 +8,7 @@ $breadcrumbs = [
     ['label' => 'Home', 'url' => app_url('index.php')],
     ['label' => 'Vehicle Log'],
 ];
-$internalBackUrl=requested_return_url(app_url('admin.php'));
+$internalBackUrl=requested_return_url(app_url('index.php'));
 $vehicleHubUrl=app_url('vehicles.php?return_to='.rawurlencode($internalBackUrl));
 require_once __DIR__ . '/../includes/header.php';
 

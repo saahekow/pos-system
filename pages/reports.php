@@ -2,7 +2,10 @@
 require_once __DIR__ . '/../config/app.php';
 ensure_customer_promo_plug_schema();
 $requestedReportSection = (string) ($_GET['report'] ?? '');
-require_module_access($requestedReportSection === 'followup' ? 'customer_followup' : 'reports');
+$requestedReportModule = $requestedReportSection === 'followup' && current_user_role() !== 'staff'
+    ? 'customer_followup'
+    : 'reports';
+require_module_access($requestedReportModule);
 ensure_destination_visit_schema();
 ensure_places_management_schema();
 
@@ -115,7 +118,7 @@ if (($selectedDestination || $allDestinations) && $mode !== '') {
     if ($reportSection === 'followup' && $reportVendorId) {
         $sql .= ' AND v.vendor_id=?';
         $params[]=$reportVendorId;
-    } elseif ($reportSection === 'followup' && !in_array(current_user_role(), ['super_admin','admin'], true) && !$reportSharedTripAccess) {
+    } elseif ($reportSection === 'followup' && !in_array(current_user_role(), ['super_admin','admin','staff'], true) && !$reportSharedTripAccess) {
         $sql .= ' AND (v.recorded_by_user_id=? OR v.staff_id=?)';
         array_push($params,$reportUserId,$reportStaffId);
     }
@@ -128,7 +131,7 @@ if (($selectedDestination || $allDestinations) && $mode !== '') {
     if($reportSection==='followup')$legacySql.=" AND dv.visit_type='follow_up'";else $legacySql.=" AND dv.visit_type='registration'";
     if(!$allDestinations){$legacySql.=' AND dv.destination_id=?';$legacyParams[]=$destinationId;}
     if($reportSection==='followup'&&$reportVendorId){$legacySql.=' AND dv.vendor_id=?';$legacyParams[]=$reportVendorId;
-    }elseif($reportSection==='followup'&&!in_array(current_user_role(),['super_admin','admin'],true)&&!$reportSharedTripAccess){$legacySql.=' AND (dv.recorded_by_user_id=? OR dv.staff_id=?)';array_push($legacyParams,$reportUserId,$reportStaffId);}
+    }elseif($reportSection==='followup'&&!in_array(current_user_role(),['super_admin','admin','staff'],true)&&!$reportSharedTripAccess){$legacySql.=' AND (dv.recorded_by_user_id=? OR dv.staff_id=?)';array_push($legacyParams,$reportUserId,$reportStaffId);}
     $legacyStatement=db()->prepare($legacySql.' ORDER BY COALESCE(dv.follow_up_at,dv.created_at) DESC,dv.id DESC');$legacyStatement->execute($legacyParams);
     $rows=array_merge($rows,$legacyStatement->fetchAll());
     usort($rows,static fn(array $a,array $b):int=>strcmp((string)($b['follow_up_at']?:$b['created_at']),(string)($a['follow_up_at']?:$a['created_at'])));

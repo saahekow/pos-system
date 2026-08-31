@@ -19,6 +19,8 @@ $requestedReturnTo=trim((string)($_GET['return_to']??''));$allowedReturnBases=[a
 $userId = (int)current_user_id();
 $staffId = current_staff_id() ?: 0;
 $vendorId = current_user_role()==='vendor' ? (int)(current_vendor_profile()['id']??0) : 0;
+$staffMarketingReportAccess = current_user_role()==='staff' && $standaloneReport && $standalonePermission!=='' && can_access_menu_item($standalonePermission);
+$fullListingAccess = is_admin_user() || $staffMarketingReportAccess;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action'] ?? '') === 'delete_draft') {
     $deleteId = max(0, (int)($_POST['draft_id'] ?? 0));
@@ -44,10 +46,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action'] ?? '
     exit('The draft could not be deleted.');
 }
 
-$tripAccess = is_admin_user()
+$tripAccess = $fullListingAccess
     ? '1=1'
     : '(st.recorded_by_user_id=? OR st.vendor_id=? OR EXISTS (SELECT 1 FROM sales_trip_staff_assignments sta WHERE sta.sales_trip_id=st.id AND sta.staff_id=?) OR EXISTS (SELECT 1 FROM sales_trip_vendor_assignments vta WHERE vta.sales_trip_id=st.id AND vta.vendor_id=?))';
-$accessParams = is_admin_user() ? [] : [$userId, $vendorId, $staffId, $vendorId];
+$accessParams = $fullListingAccess ? [] : [$userId, $vendorId, $staffId, $vendorId];
 $like = '%' . $search . '%';
 
 $draftSql =
@@ -58,8 +60,8 @@ $draftSql =
      INNER JOIN business_locations p ON p.id=ps.bus_loc_id
      LEFT JOIN sales_trips st ON st.id=ps.sales_trip_id
      LEFT JOIN users u ON u.id=d.recorded_by_user_id
-     WHERE ".(is_admin_user() ? '1=1' : "(d.recorded_by_user_id=? OR $tripAccess)");
-$draftParams = is_admin_user() ? [] : [$userId, ...$accessParams];
+     WHERE ".($fullListingAccess ? '1=1' : "(d.recorded_by_user_id=? OR $tripAccess)");
+$draftParams = $fullListingAccess ? [] : [$userId, ...$accessParams];
 if ($search !== '') {
     $draftSql .= ' AND (d.draft_ref LIKE ? OR d.draft_payload LIKE ? OR p.business_name LIKE ? OR st.trip_code LIKE ?)';
     array_push($draftParams, $like, $like, $like, $like);
@@ -84,8 +86,8 @@ $completedSql =
      WHERE v.record_status='completed'
        AND c.master_customer_id IS NULL
        AND COALESCE(LOWER(NULLIF(jt.job_type_name,'')),LOWER(NULLIF(c.job_type,'')),'')<>'apprentice'
-       AND ".(is_admin_user() ? '1=1' : "(v.vendor_id=? OR v.recorded_by_user_id=? OR $tripAccess)");
-$completedParams = is_admin_user() ? [] : [$vendorId, $userId, ...$accessParams];
+       AND ".($fullListingAccess ? '1=1' : "(v.vendor_id=? OR v.recorded_by_user_id=? OR $tripAccess)");
+$completedParams = $fullListingAccess ? [] : [$vendorId, $userId, ...$accessParams];
 if ($search !== '') {
     $completedSql .= ' AND (v.visit_ref LIKE ? OR c.customer_ref LIKE ? OR c.customer_name LIKE ? OR c.phone LIKE ? OR c.other_phone LIKE ? OR p.business_name LIKE ? OR st.trip_code LIKE ?)';
     array_push($completedParams, $like, $like, $like, $like, $like, $like, $like);
@@ -96,13 +98,13 @@ $completedSql .= ' ORDER BY v.id DESC';
 $statement = db()->prepare($completedSql);
 $statement->execute($completedParams);
 $completed = $statement->fetchAll();
-foreach ($completed as &$completedRow) { $completedRow['record_source']='normalized_visit'; $completedRow['source_id']=(int)$completedRow['id']; $completedRow['can_edit']=1; }
+foreach ($completed as &$completedRow) { $completedRow['record_source']='normalized_visit'; $completedRow['source_id']=(int)$completedRow['id']; $completedRow['can_edit']=$staffMarketingReportAccess?0:1; }
 unset($completedRow);
 
 // Standalone vendor registrations and legacy vendor customers live outside the
 // normalized visits tables. Include them here so the vendor's record list and
 // customer report describe the same customer population.
-if (is_admin_user() || (current_user_role()==='vendor' && $vendorId>0)) {
+if ($fullListingAccess || (current_user_role()==='vendor' && $vendorId>0)) {
     $vendorVisitSql = "SELECT dv.id,dv.created_at,dv.sales_trip_id,dv.company_name,dv.owner_name,dv.phone,dv.other_phone,
             dv.location_id,dv.area,dv.vendor_id,l.town_name,u.full_name AS created_by,COALESCE(st.trip_code,'STANDALONE') AS trip_code
         FROM destination_visits dv
@@ -111,15 +113,15 @@ if (is_admin_user() || (current_user_role()==='vendor' && $vendorId>0)) {
         LEFT JOIN sales_trips st ON st.id=dv.sales_trip_id
         WHERE dv.visit_type='registration' AND dv.record_status='completed' AND dv.normalized_customer_id IS NULL
           AND NOT EXISTS (SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(dv.phone,''),'!'),COALESCE(NULLIF(dv.other_phone,''),'?')))
-          AND ".(is_admin_user()?'1=1':'(dv.vendor_id=? OR st.vendor_id=? OR EXISTS (SELECT 1 FROM sales_trip_vendor_assignments vta WHERE vta.sales_trip_id=dv.sales_trip_id AND vta.vendor_id=?))');
-    $vendorVisitParams=is_admin_user()?[]:[$vendorId,$vendorId,$vendorId];
+          AND ".($fullListingAccess?'1=1':'(dv.vendor_id=? OR st.vendor_id=? OR EXISTS (SELECT 1 FROM sales_trip_vendor_assignments vta WHERE vta.sales_trip_id=dv.sales_trip_id AND vta.vendor_id=?))');
+    $vendorVisitParams=$fullListingAccess?[]:[$vendorId,$vendorId,$vendorId];
     if($search!==''){$vendorVisitSql.=' AND (dv.company_name LIKE ? OR dv.owner_name LIKE ? OR dv.phone LIKE ? OR dv.other_phone LIKE ? OR dv.area LIKE ? OR l.town_name LIKE ? OR st.trip_code LIKE ?)';array_push($vendorVisitParams,$like,$like,$like,$like,$like,$like,$like);}
     if($dateFrom!==''){$vendorVisitSql.=' AND DATE(dv.created_at)>=?';$vendorVisitParams[]=$dateFrom;}
     if($dateTo!==''){$vendorVisitSql.=' AND DATE(dv.created_at)<=?';$vendorVisitParams[]=$dateTo;}
     $vendorVisitStatement=db()->prepare($vendorVisitSql);$vendorVisitStatement->execute($vendorVisitParams);
     foreach($vendorVisitStatement->fetchAll() as $row){$name=trim((string)($row['company_name']?:$row['owner_name']))?:'Customer';$completed[]=['id'=>(int)$row['id'],'source_id'=>(int)$row['id'],'record_source'=>'destination_visit','can_edit'=>1,'visit_ref'=>'VS-'.(int)$row['id'],'visit_date'=>substr((string)$row['created_at'],0,10),'created_at'=>(string)$row['created_at'],'sales_trip_id'=>(int)($row['sales_trip_id']??0),'customer_id'=>0,'customer_ref'=>'','customer_name'=>$name,'phone'=>(string)($row['phone']??''),'other_phone'=>(string)($row['other_phone']??''),'bus_loc_id'=>0,'bus_loc_ref'=>'','business_name'=>trim((string)($row['area']??'').' / '.(string)($row['town_name']??''),' /'),'is_legacy_placeholder'=>0,'trip_code'=>(string)$row['trip_code'],'created_by'=>(string)($row['created_by']??'')];}
 
-    $legacySql="SELECT vc.*,l.town_name,u.full_name AS created_by FROM vendor_customers vc LEFT JOIN locations l ON l.id=vc.location_id LEFT JOIN users u ON u.id=vc.created_by_user_id WHERE ".(is_admin_user()?'1=1':'vc.vendor_id=?')." AND vc.normalized_customer_id IS NULL AND NOT EXISTS(SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(vc.phone,''),'!'),COALESCE(NULLIF(vc.other_phone,''),'?')))";$legacyParams=is_admin_user()?[]:[$vendorId];
+    $legacySql="SELECT vc.*,l.town_name,u.full_name AS created_by FROM vendor_customers vc LEFT JOIN locations l ON l.id=vc.location_id LEFT JOIN users u ON u.id=vc.created_by_user_id WHERE ".($fullListingAccess?'1=1':'vc.vendor_id=?')." AND vc.normalized_customer_id IS NULL AND NOT EXISTS(SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(vc.phone,''),'!'),COALESCE(NULLIF(vc.other_phone,''),'?')))";$legacyParams=$fullListingAccess?[]:[$vendorId];
     if($search!==''){$legacySql.=' AND (vc.customer_name LIKE ? OR vc.contact_name LIKE ? OR vc.phone LIKE ? OR vc.other_phone LIKE ? OR vc.area LIKE ? OR l.town_name LIKE ?)';array_push($legacyParams,$like,$like,$like,$like,$like,$like);}
     if($dateFrom!==''){$legacySql.=' AND DATE(vc.created_at)>=?';$legacyParams[]=$dateFrom;}
     if($dateTo!==''){$legacySql.=' AND DATE(vc.created_at)<=?';$legacyParams[]=$dateTo;}
@@ -143,12 +145,12 @@ $placesSql =
      LEFT JOIN locations l ON l.id=p.location_id
      LEFT JOIN destinations d ON d.id=p.destination_id
      LEFT JOIN users u ON u.id=p.created_by_user_id
-     WHERE p.is_active=1 AND p.is_legacy_placeholder=0 AND ".(is_admin_user() ? '1=1' : "(p.created_by_user_id=? OR EXISTS (
+     WHERE p.is_active=1 AND p.is_legacy_placeholder=0 AND ".($fullListingAccess ? '1=1' : "(p.created_by_user_id=? OR EXISTS (
         SELECT 1 FROM place_visit_sessions ps
         LEFT JOIN sales_trips st ON st.id=ps.sales_trip_id
         WHERE ps.bus_loc_id=p.id AND $tripAccess
      ))");
-$placesParams = is_admin_user() ? [] : [$userId, ...$accessParams];
+$placesParams = $fullListingAccess ? [] : [$userId, ...$accessParams];
 if ($search !== '') {
     $placesSql .= ' AND (p.bus_loc_ref LIKE ? OR p.business_name LIKE ? OR p.area LIKE ? OR l.town_name LIKE ?)';
     array_push($placesParams, $like, $like, $like, $like);
@@ -197,9 +199,9 @@ require __DIR__ . '/../includes/header.php';
     <?php endforeach; elseif($tab==='drafts'): foreach($drafts as $row): $payload=json_decode((string)$row['draft_payload'],true)?:[]; ?>
         <tr><td data-label="Draft"><strong><?=e($row['draft_ref'])?></strong><span class="muted-text"><?=e(date('d M Y',strtotime((string)$row['created_at'])))?></span></td><td data-label="Customer"><?=e(trim((string)($payload['customer_name']??''))?:'Incomplete customer')?><span class="muted-text"><?=e((string)($payload['phone']??''))?></span></td><td data-label="Business Location"><?=e(trim((string)$row['business_name'])?:'Unnamed location')?></td><td data-label="Location Ref"><?=e((string)$row['bus_loc_ref'])?></td><td data-label="Trip"><?=e($row['trip_code'])?></td><td data-label="Created by"><?=e((string)($row['created_by']?:'Unknown'))?></td><td data-label="Action"><div class="table-actions"><a class="secondary-button secondary-button--small" href="<?=e(app_url('registration-edit.php?type=draft&id='.(int)$row['id'].'&return_to='.rawurlencode($recordsCurrentUrl)))?>">Continue</a><form method="post" data-confirm-title="Delete draft" data-confirm-message="Delete <?=e($row['draft_ref'])?> permanently?"><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_draft"><input type="hidden" name="draft_id" value="<?=(int)$row['id']?>"><button class="icon-button icon-button--danger" type="submit" title="Delete draft" aria-label="Delete <?=e($row['draft_ref'])?>"><i class="fa-solid fa-trash"></i></button></form></div></td></tr>
     <?php endforeach; elseif($tab==='completed'): foreach($completed as $row): $legacyAssignUrl=in_array((string)($row['record_source']??''),['destination_visit','vendor_customer'],true)?app_url('legacy-customer-location.php?source='.(string)$row['record_source'].'&id='.(int)$row['source_id'].'&return_to='.rawurlencode($recordsCurrentUrl)):''; ?>
-        <tr><td data-label="Registration"><strong><?=e($row['visit_ref'])?></strong><span class="muted-text"><?=e($row['customer_ref'])?></span></td><td data-label="Customer"><?=e($row['customer_name'])?><?php if((int)$row['is_legacy_placeholder']===1):?><span class="muted-text">Legacy customer</span><?php endif;?></td><td data-label="Phone"><?=e((string)($row['phone']?:$row['other_phone']))?></td><td data-label="Business Location"><?=(int)$row['is_legacy_placeholder']===1?'No location assigned':e(trim((string)$row['business_name'])?:'Unnamed location')?></td><td data-label="Location Ref"><?=(int)$row['is_legacy_placeholder']===1?'—':e((string)$row['bus_loc_ref'])?></td><td data-label="Trip"><?=e($row['trip_code'])?></td><td data-label="Created by"><?=e((string)($row['created_by']?:'Unknown'))?></td><td data-label="Action"><div class="table-actions"><?php if(($row['record_source']??'normalized_visit')==='vendor_customer'):?><a class="secondary-button secondary-button--small" href="<?=e(app_url('vendor-customer-edit.php?id='.(int)$row['source_id']))?>">Edit</a><?php elseif(($row['record_source']??'normalized_visit')==='destination_visit'&&(int)($row['can_edit']??0)===1):?><a class="secondary-button secondary-button--small" href="<?=e(app_url('visit-edit.php?id='.(int)$row['source_id'].'&return_to='.rawurlencode($recordsCurrentUrl)))?>">Edit</a><?php elseif(($row['record_source']??'normalized_visit')==='normalized_visit'):?><?php if((int)$row['is_legacy_placeholder']===1):?><a class="secondary-button secondary-button--small" href="<?=e(app_url('place-details.php?id='.(int)$row['bus_loc_id'].'&edit=1&customer_id='.(int)$row['customer_id'].'&return_to='.rawurlencode($recordsCurrentUrl)))?>">Assign Location</a><?php endif;?><a class="secondary-button secondary-button--small" href="<?=e(app_url('registration-edit.php?type=completed&id='.(int)$row['id'].'&return_to='.rawurlencode($recordsCurrentUrl)))?>">Edit</a><?php else:?><span class="muted-text">View only</span><?php endif;?></div></td></tr>
+        <tr><td data-label="Registration"><strong><?=e($row['visit_ref'])?></strong><span class="muted-text"><?=e($row['customer_ref'])?></span></td><td data-label="Customer"><?=e($row['customer_name'])?><?php if((int)$row['is_legacy_placeholder']===1):?><span class="muted-text">Legacy customer</span><?php endif;?></td><td data-label="Phone"><?=e((string)($row['phone']?:$row['other_phone']))?></td><td data-label="Business Location"><?=(int)$row['is_legacy_placeholder']===1?'No location assigned':e(trim((string)$row['business_name'])?:'Unnamed location')?></td><td data-label="Location Ref"><?=(int)$row['is_legacy_placeholder']===1?'—':e((string)$row['bus_loc_ref'])?></td><td data-label="Trip"><?=e($row['trip_code'])?></td><td data-label="Created by"><?=e((string)($row['created_by']?:'Unknown'))?></td><td data-label="Action"><div class="table-actions"><?php if($staffMarketingReportAccess):?><span class="muted-text">View only</span><?php elseif(($row['record_source']??'normalized_visit')==='vendor_customer'):?><a class="secondary-button secondary-button--small" href="<?=e(app_url('vendor-customer-edit.php?id='.(int)$row['source_id']))?>">Edit</a><?php elseif(($row['record_source']??'normalized_visit')==='destination_visit'&&(int)($row['can_edit']??0)===1):?><a class="secondary-button secondary-button--small" href="<?=e(app_url('visit-edit.php?id='.(int)$row['source_id'].'&return_to='.rawurlencode($recordsCurrentUrl)))?>">Edit</a><?php elseif(($row['record_source']??'normalized_visit')==='normalized_visit'):?><?php if((int)$row['is_legacy_placeholder']===1):?><a class="secondary-button secondary-button--small" href="<?=e(app_url('place-details.php?id='.(int)$row['bus_loc_id'].'&edit=1&customer_id='.(int)$row['customer_id'].'&return_to='.rawurlencode($recordsCurrentUrl)))?>">Assign Location</a><?php endif;?><a class="secondary-button secondary-button--small" href="<?=e(app_url('registration-edit.php?type=completed&id='.(int)$row['id'].'&return_to='.rawurlencode($recordsCurrentUrl)))?>">Edit</a><?php else:?><span class="muted-text">View only</span><?php endif;?></div></td></tr>
     <?php endforeach; else: foreach($places as $row): ?>
-        <tr><td data-label="Location"><strong><?=e(trim((string)$row['business_name'])?:'Incomplete Location')?></strong><span class="muted-text"><?=e($row['bus_loc_ref'])?></span></td><td data-label="Town / Area"><?=e(trim((string)($row['town_name']??'').' / '.(string)($row['area']??''),' /')?:'Not completed')?></td><td data-label="Destination"><?=e((string)($row['destination_name']?:'Not completed'))?></td><td data-label="Created by"><?=e((string)($row['created_by']?:'Unknown'))?></td><td data-label="Status"><span class="status-pill <?=$row['is_incomplete']?'status-pill--warning':'status-pill--success'?>"><?=$row['is_incomplete']?'Incomplete':'Completed'?></span></td><td data-label="Action"><a class="secondary-button secondary-button--small" href="<?=e(app_url('place-details.php?id='.(int)$row['id'].'&edit=1&return_to='.rawurlencode($recordsCurrentUrl)))?>">Edit</a></td></tr>
+        <tr><td data-label="Location"><strong><?=e(trim((string)$row['business_name'])?:'Incomplete Location')?></strong><span class="muted-text"><?=e($row['bus_loc_ref'])?></span></td><td data-label="Town / Area"><?=e(trim((string)($row['town_name']??'').' / '.(string)($row['area']??''),' /')?:'Not completed')?></td><td data-label="Destination"><?=e((string)($row['destination_name']?:'Not completed'))?></td><td data-label="Created by"><?=e((string)($row['created_by']?:'Unknown'))?></td><td data-label="Status"><span class="status-pill <?=$row['is_incomplete']?'status-pill--warning':'status-pill--success'?>"><?=$row['is_incomplete']?'Incomplete':'Completed'?></span></td><td data-label="Action"><?php if($staffMarketingReportAccess):?><span class="muted-text">View only</span><?php else:?><a class="secondary-button secondary-button--small" href="<?=e(app_url('place-details.php?id='.(int)$row['id'].'&edit=1&return_to='.rawurlencode($recordsCurrentUrl)))?>">Edit</a><?php endif;?></td></tr>
     <?php endforeach; endif; ?>
     <?php $empty=($tab==='all'&&!$allRegistrations)||($tab==='drafts'&&!$drafts)||($tab==='completed'&&!$completed)||($tab==='places'&&!$places); if($empty): ?><tr><td colspan="<?=$tab==='places'?6:($tab==='drafts'?7:($tab==='all'?9:8))?>" class="empty-state">No accessible records match this view.</td></tr><?php endif; ?>
     </tbody></table></div>

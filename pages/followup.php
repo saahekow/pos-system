@@ -46,7 +46,7 @@ if ($sourceVisitId && $destination) {
     $statement->execute([$sourceVisitId, $destinationId]);
     $source = $statement->fetch() ?: null;
     if($source&&$currentVendorId&&(int)($source['vendor_id']??0)!==$currentVendorId)$source=null;
-    if($source&&!$currentVendorId&&!in_array(current_user_role(),['super_admin','admin'],true)&&!$sharedTripAccess&&(int)($source['recorded_by_user_id']??0)!==(int)$userId&&(int)($source['staff_id']??0)!==(int)$staffId)$source=null;
+    if($source&&!$currentVendorId&&!in_array(current_user_role(),['super_admin','admin','staff'],true)&&!$sharedTripAccess&&(int)($source['recorded_by_user_id']??0)!==(int)$userId&&(int)($source['staff_id']??0)!==(int)$staffId)$source=null;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $followupMethod === 'physical_visit' && !$activeTripId) {
@@ -138,7 +138,7 @@ if ($destination) {
               AND v.id=(SELECT MAX(v2.id) FROM visits v2 WHERE v2.customer_id=v.customer_id AND v2.visit_type='registration' AND v2.record_status='completed')";
     $params = [$destinationId];
     if($currentVendorId){$sql.=" AND v.vendor_id=?";array_push($params,$currentVendorId);
-    } elseif (!in_array(current_user_role(), ['super_admin', 'admin'], true) && !$sharedTripAccess) {
+    } elseif (!in_array(current_user_role(), ['super_admin', 'admin', 'staff'], true) && !$sharedTripAccess) {
         $sql .= ' AND (v.recorded_by_user_id=? OR v.staff_id=?)';
         array_push($params, $userId, $staffId);
     }

@@ -67,7 +67,9 @@ if (!$place) {
     exit('Location not found.');
 }
 
-$canAccessPlace = is_admin_user() || (int)($place['created_by_user_id'] ?? 0) === (int)current_user_id();
+$staffCanManageLocations = current_user_role() === 'staff'
+    && (can_access_menu_item('marketing_location_registration') || can_access_menu_item('marketing_report_location'));
+$canAccessPlace = is_admin_user() || $staffCanManageLocations || (int)($place['created_by_user_id'] ?? 0) === (int)current_user_id();
 if (!$canAccessPlace) {
     $accessStatement = db()->prepare('SELECT sales_trip_id FROM place_visit_sessions WHERE bus_loc_id=?');
     $accessStatement->execute([$placeId]);
@@ -82,9 +84,10 @@ if (!$canAccessPlace) {
     http_response_code(403);
     exit('You do not have access to this location.');
 }
-$canManageLocationRecords = is_admin_user() || (current_user_role() === 'vendor' && $canAccessPlace);
-$canManageTargetPlace = static function (array $targetPlace): bool {
+$canManageLocationRecords = is_admin_user() || $staffCanManageLocations || (current_user_role() === 'vendor' && $canAccessPlace);
+$canManageTargetPlace = static function (array $targetPlace) use ($staffCanManageLocations): bool {
     if (is_admin_user()) return true;
+    if ($staffCanManageLocations) return true;
     if (current_user_role() !== 'vendor') return false;
     if ((int)($targetPlace['created_by_user_id'] ?? 0) === (int)current_user_id()) return true;
     $statement = db()->prepare('SELECT sales_trip_id FROM place_visit_sessions WHERE bus_loc_id=?');
@@ -180,6 +183,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token((string)($_POST['csrf_token'] ?? ''))) {
         $error = 'Your session expired. Please try again.';
         $editMode = true;
+    } elseif ((string)($_POST['form_action'] ?? '') === 'delete_place') {
+        if (!$canManageLocationRecords) {
+            $error = 'You do not have permission to delete this business location.';
+        } else {
+            db()->prepare('UPDATE business_locations SET is_active=0 WHERE id=?')->execute([$placeId]);
+            header('Location: '.$returnTo.(str_contains($returnTo,'?')?'&':'?').'deleted=1');
+            exit;
+        }
     } elseif ((string)($_POST['form_action'] ?? '') === 'move_customer') {
         $targetPlaceId=max(0,(int)($_POST['target_bus_loc_id']??0));
         $customerId=max(0,(int)($_POST['customer_id']??0));
@@ -289,7 +300,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->commit();
             header('Location: '.app_url('place-details.php?id='.$targetPlaceId.'&assigned=1&return_to='.rawurlencode($returnTo)));exit;
         }catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error='The legacy customer could not be assigned to the selected location.';}}
-        $editMode=true;    } elseif ((string)($_POST['form_action'] ?? '') === 'update_place') {
+        $editMode=true;    } elseif ((string)($_POST['form_action'] ?? '') === 'update_place' && !$canManageLocationRecords) {
+        $error = 'You do not have permission to edit this business location.';
+        $editMode = true;
+    } elseif ((string)($_POST['form_action'] ?? '') === 'update_place') {
         $businessName = trim((string)($_POST['business_name'] ?? ''));
         $destinationId = max(0, (int)($_POST['destination_id'] ?? 0));
         $locationRegionKey = trim((string)($_POST['location_region_key'] ?? ''));
@@ -407,6 +421,7 @@ require_once __DIR__ . '/../includes/header.php';
     <?php if ($message): ?><div class="profile-message is-success"><?=e($message)?></div><?php endif; ?>
     <?php if ($error): ?><div class="profile-message is-error"><?=e($error)?></div><?php endif; ?>
     <div class="management-heading"><div><span class="section-kicker"><?= e($place['bus_loc_ref']) ?></span><h1><?= e($placeDisplayName) ?></h1><p><i class="fa-solid fa-location-dot"></i> <?= e(trim(($place['town_name'] ?? '').' / '.($place['area'] ?? ''),' /') ?: 'Location details pending') ?></p></div><div class="management-icon"><i class="fa-solid fa-shop"></i></div></div>
+    <?php if($canManageLocationRecords):?><form method="post" class="form-actions" data-confirm-title="Delete location?" data-confirm-message="This location will be removed from active records."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_place"><input type="hidden" name="return_to" value="<?=e($returnTo)?>"><button class="danger-button" type="submit"><i class="fa-solid fa-trash"></i><span>Delete Location</span></button></form><?php endif;?>
     <div class="place-detail-actions"><a class="secondary-button" href="<?=e($returnTo)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a><a class="secondary-button" href="<?=e(app_url('place-details.php?id='.$placeId.($editMode?'':'&edit=1').'&return_to='.rawurlencode($returnTo)))?>"><i class="fa-solid fa-pen"></i><span><?=$editMode?'Cancel Edit':'Edit Location'?></span></a><?php if($isCurrentActiveLocation):?><a class="login-button" href="<?=e(app_url('normalized-customer.php?stage=activity'))?>"><span>Continue at This Location</span><i class="fa-solid fa-arrow-right"></i></a><?php else:?><form method="post" action="<?= e(app_url('normalized-customer.php?stage=existing-place')) ?>"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="form_action" value="select_place"><input type="hidden" name="bus_loc_id" value="<?= (int)$place['id'] ?>"><button class="login-button" type="submit"><span>Continue at This Location</span><i class="fa-solid fa-arrow-right"></i></button></form><?php endif;?></div>
     <?php if($editMode && (int)($place['is_legacy_placeholder']??0)===1): ?>
     <form class="record-form mobile-line-form" method="post" action="<?=e(app_url('place-details.php?id='.$placeId.'&edit=1&customer_id='.$legacyCustomerId.'&return_to='.rawurlencode($returnTo)))?>">

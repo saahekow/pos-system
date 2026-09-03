@@ -40,7 +40,8 @@ $staffOwnsVisit=current_user_role()==='staff'&&(
 );
 $vendorId=(int)(current_vendor_profile()['id']??0);
 $vendorCanEdit=current_user_role()==='vendor'&&$vendorId>0&&((int)($visit['vendor_id']??0)===$vendorId||can_access_registration_trip((int)($visit['sales_trip_id']??0)));
-$canEdit=in_array(current_user_role(),['super_admin','admin'],true)||$staffOwnsVisit||$vendorCanEdit;
+$staffCanManageCustomers=current_user_role()==='staff'&&(can_access_menu_item('marketing_customer')||can_access_menu_item('marketing_report_customer'));
+$canEdit=in_array(current_user_role(),['super_admin','admin'],true)||$staffCanManageCustomers||$staffOwnsVisit||$vendorCanEdit;
 if(!$canEdit){http_response_code(403);exit('You can edit only customers assigned to your account.');}
 $isTaxi = (string)($visit['destination_key']??'') === taxi_rank_destination_key();
 $error = '';

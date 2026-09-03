@@ -1,20 +1,23 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
-require_module_access('vendor_customers');
+require_auth();
 
 $vendor = current_vendor_profile();
-if (!$vendor) { http_response_code(403); exit('A valid vendor account is required.'); }
+$staffCanManageCustomers = current_user_role() === 'staff'
+    && (can_access_menu_item('marketing_customer') || can_access_menu_item('marketing_report_customer'));
+if (!$vendor && !$staffCanManageCustomers) { http_response_code(403); exit('You do not have permission to manage customers.'); }
 $requestedReturnTo=trim((string)($_GET['return_to']??$_POST['return_to']??''));
 $returnParts=$requestedReturnTo!==''?parse_url($requestedReturnTo):false;
 $allowedReturnPaths=array_map(static fn(string $url):string=>(string)(parse_url($url,PHP_URL_PATH)?:$url),[app_url('registration-records.php'),app_url('customers.php'),app_url('vendor-reports.php')]);
 $returnTo=is_array($returnParts)&&!isset($returnParts['scheme'],$returnParts['host'])&&in_array((string)($returnParts['path']??''),$allowedReturnPaths,true)?$requestedReturnTo:app_url('vendor-reports.php?report=customers&mode=lookup');
 $customerId = max(0, (int)($_GET['id'] ?? $_POST['customer_id'] ?? 0));
-$statement = db()->prepare('SELECT * FROM vendor_customers WHERE id=? AND vendor_id=? LIMIT 1');
-$statement->execute([$customerId, (int)$vendor['id']]);
+$statement = db()->prepare('SELECT * FROM vendor_customers WHERE id=?'.($staffCanManageCustomers?'':' AND vendor_id=?').' LIMIT 1');
+$statement->execute($staffCanManageCustomers?[$customerId]:[$customerId, (int)$vendor['id']]);
 $customer = $statement->fetch();
 if (!$customer) { http_response_code(404); exit('Customer not found.'); }
+$customerVendorId = (int)$customer['vendor_id'];
 
-$managedTowns = assigned_towns_for_vendor((int)$vendor['id']);
+$managedTowns = $staffCanManageCustomers ? active_locations() : assigned_towns_for_vendor((int)$vendor['id']);
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'save') === 'delete') {
     if (!verify_csrf_token((string)($_POST['csrf_token'] ?? ''))) $error = 'Your session expired. Please try again.';
@@ -22,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
         db()->beginTransaction();
         try {
             db()->prepare("DELETE FROM customer_pos_sale_vins WHERE customer_source='vendor_customer' AND record_id=?")->execute([$customerId]);
-            db()->prepare('DELETE FROM vendor_customers WHERE id=? AND vendor_id=?')->execute([$customerId,(int)$vendor['id']]);
+            db()->prepare('DELETE FROM vendor_customers WHERE id=? AND vendor_id=?')->execute([$customerId,$customerVendorId]);
             db()->commit();
             header('Location: '.$returnTo.(str_contains($returnTo,'?')?'&':'?').'deleted=1'); exit;
         } catch(Throwable $exception) { if(db()->inTransaction())db()->rollBack();$error='The customer could not be deleted.'; }
@@ -42,11 +45,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'sa
     elseif (!$selectedTown) $error = 'Select one of your assigned towns.';
     else {
         $duplicateFound=false;
-        if($customer['phone']!==$originalPhone){$duplicate = db()->prepare('SELECT id FROM vendor_customers WHERE vendor_id=? AND phone=? AND id<>? LIMIT 1');$duplicate->execute([(int)$vendor['id'], $customer['phone'], $customerId]);$duplicateFound=(bool)$duplicate->fetchColumn();}
+        if($customer['phone']!==$originalPhone){$duplicate = db()->prepare('SELECT id FROM vendor_customers WHERE vendor_id=? AND phone=? AND id<>? LIMIT 1');$duplicate->execute([$customerVendorId, $customer['phone'], $customerId]);$duplicateFound=(bool)$duplicate->fetchColumn();}
         if ($duplicateFound) $error = 'This phone number is already used by another customer.';
         else {
             $update = db()->prepare('UPDATE vendor_customers SET customer_name=?,contact_name=?,phone=?,other_phone=?,location_id=?,town_id=?,area=?,notes=? WHERE id=? AND vendor_id=?');
-            $update->execute([$customer['customer_name'],$customer['contact_name']?:null,$customer['phone'],$customer['other_phone']?:null,(int)$selectedTown['id'],(int)$selectedTown['id'],$customer['area']?:null,$customer['notes']?:null,$customerId,(int)$vendor['id']]);
+            $update->execute([$customer['customer_name'],$customer['contact_name']?:null,$customer['phone'],$customer['other_phone']?:null,(int)$selectedTown['id'],(int)$selectedTown['id'],$customer['area']?:null,$customer['notes']?:null,$customerId,$customerVendorId]);
             header('Location: '.$returnTo.(str_contains($returnTo,'?')?'&':'?').'updated=1'); exit;
         }
     }

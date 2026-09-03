@@ -27,7 +27,7 @@ if(!$sale){http_response_code(404);exit('Receipt not found.');}
 $receiptPersonnel=current_vendor_personnel();
 $receiptVendor=current_vendor_profile();
 $canViewVendorSales=current_user_role()==='vendor'||($receiptPersonnel&&(int)($receiptPersonnel['can_reports']??0)===1);
-$canViewSale=is_admin_user()||(int)$sale['recorded_by_user_id']===(int)current_user_id()||($canViewVendorSales&&$receiptVendor&&(int)($sale['vendor_id']??0)===(int)$receiptVendor['id']);
+$canViewSale=is_admin_user()||current_user_role()==='staff'||(int)$sale['recorded_by_user_id']===(int)current_user_id()||($canViewVendorSales&&$receiptVendor&&(int)($sale['vendor_id']??0)===(int)$receiptVendor['id']);
 if(!$canViewSale){http_response_code(404);exit('Receipt not found.');}
 
 $itemStatement=db()->prepare('SELECT * FROM pos_sale_items WHERE sale_id=? ORDER BY id');

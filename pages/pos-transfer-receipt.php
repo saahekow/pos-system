@@ -15,7 +15,7 @@ $statement = db()->prepare("SELECT t.*,creator.full_name AS recorded_by,responde
 $statement->execute([$transferId]);
 $transfer = $statement->fetch();
 $canViewVendorTransfer=$vendor&&(current_user_role()==='vendor'||($transferPersonnel&&((int)($transferPersonnel['can_reports']??0)===1||(int)($transferPersonnel['can_transfer']??0)===1)));
-$canView = $transfer && (is_admin_user() || (int)$transfer['recorded_by_user_id'] === (int)current_user_id() || ($canViewVendorTransfer && (int)$transfer['vendor_id'] === (int)$vendor['id']));
+$canView = $transfer && (is_admin_user() || current_user_role() === 'staff' || (int)$transfer['recorded_by_user_id'] === (int)current_user_id() || ($canViewVendorTransfer && (int)$transfer['vendor_id'] === (int)$vendor['id']));
 if (!$canView) {
     http_response_code(404);
     exit('Transfer not found.');

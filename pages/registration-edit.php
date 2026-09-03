@@ -120,7 +120,10 @@ if (!$record) {
 }
 $payload['sale_vin'] = isset($payload['sale_vin']) && is_array($payload['sale_vin']) ? $payload['sale_vin'] : [];
 $payload['sale_amount'] = isset($payload['sale_amount']) && is_array($payload['sale_amount']) ? $payload['sale_amount'] : [];
-if ((int)($record['recorded_by_user_id'] ?? 0) !== (int)current_user_id()
+$staffCanManageCustomers = current_user_role() === 'staff'
+    && (can_access_menu_item('marketing_customer') || can_access_menu_item('marketing_report_customer'));
+if (!$staffCanManageCustomers
+    && (int)($record['recorded_by_user_id'] ?? 0) !== (int)current_user_id()
     && !can_access_registration_trip((int)$record['sales_trip_id'])) {
     http_response_code(403);
     exit('You do not have access to this registration.');

@@ -22,7 +22,7 @@ if(current_vendor_is_sor()&&$source==='pos'){header('Location: '.app_url('pos-re
 $sourceQuery = $source !== '' ? '&source=' . rawurlencode($source) : '';
 
 $userId = (int)(current_user_id() ?? 0);
-$isManagement = is_admin_user();
+$isManagement = is_admin_user() || current_user_role() === 'staff';
 $reportPersonnel = current_vendor_personnel();
 $hasAssignedReports = $reportPersonnel && (int)($reportPersonnel['can_reports'] ?? 0) === 1;
 $reportVendor = current_vendor_profile();

@@ -21,6 +21,10 @@ $staffId = current_staff_id() ?: 0;
 $vendorId = current_user_role()==='vendor' ? (int)(current_vendor_profile()['id']??0) : 0;
 $staffMarketingReportAccess = current_user_role()==='staff' && $standaloneReport && $standalonePermission!=='' && can_access_menu_item($standalonePermission);
 $fullListingAccess = is_admin_user() || $staffMarketingReportAccess;
+// Staff with an assigned customer/location report may manage the records shown
+// in that report. Keep full listing access above, then allow the shared action
+// renderer to expose its normal edit controls.
+$staffMarketingReportAccess = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action'] ?? '') === 'delete_draft') {
     $deleteId = max(0, (int)($_POST['draft_id'] ?? 0));
@@ -98,7 +102,7 @@ $completedSql .= ' ORDER BY v.id DESC';
 $statement = db()->prepare($completedSql);
 $statement->execute($completedParams);
 $completed = $statement->fetchAll();
-foreach ($completed as &$completedRow) { $completedRow['record_source']='normalized_visit'; $completedRow['source_id']=(int)$completedRow['id']; $completedRow['can_edit']=$staffMarketingReportAccess?0:1; }
+foreach ($completed as &$completedRow) { $completedRow['record_source']='normalized_visit'; $completedRow['source_id']=(int)$completedRow['id']; $completedRow['can_edit']=1; }
 unset($completedRow);
 
 // Standalone vendor registrations and legacy vendor customers live outside the

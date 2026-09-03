@@ -106,7 +106,9 @@ $staffOwnsVisit = current_user_role() === 'staff' && (
 $vendorOwnsVisit = current_user_role() === 'vendor'
     && $vendorCanView;
 $tripCanManage = (int)($visit['sales_trip_id'] ?? 0) > 0 && can_access_registration_trip((int)$visit['sales_trip_id']);
-$canEdit = $isAdmin || $staffOwnsVisit || $vendorOwnsVisit || $tripCanManage;
+$staffCanManageCustomers = current_user_role() === 'staff'
+    && (can_access_menu_item('marketing_customer') || can_access_menu_item('marketing_report_customer'));
+$canEdit = $isAdmin || $staffCanManageCustomers || $staffOwnsVisit || $vendorOwnsVisit || $tripCanManage;
 $editMode = (string)($_GET['edit'] ?? '') === '1' && $canEdit;
 $actionError = '';
 $backUrl = $returnTo !== ''

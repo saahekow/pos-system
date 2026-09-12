@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
 require_auth();
+ensure_recycle_bin_schema();
 if (!can_access_menu_item('admin_reports')) {
     header('Location: '.app_url('admin.php'));
     exit;
@@ -12,6 +13,7 @@ $staffRecords=db()->query(
      FROM staff
      LEFT JOIN staff_roles ON staff_roles.id=staff.role_id
      LEFT JOIN users ON users.id=staff.added_by_user_id
+     WHERE staff.deleted_at IS NULL
      ORDER BY staff.full_name,staff.id'
 )->fetchAll();
 $pageTitle='Staff Report';

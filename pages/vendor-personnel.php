@@ -2,6 +2,7 @@
 require_once __DIR__.'/../config/app.php';
 require_module_access('vendor_personnel');
 ensure_vendor_personnel_schema();
+ensure_recycle_bin_schema();
 ensure_user_phone_schema();
 
 $vendor=current_vendor_profile();
@@ -47,7 +48,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
     elseif($action==='delete'){
         $statement=db()->prepare('SELECT user_id FROM vendor_personnel WHERE id=? AND vendor_id=?');$statement->execute([$postedId,$vendorId]);$userId=(int)($statement->fetchColumn()?:0);
         if(!$userId)$error='Personnel record not found.';
-        else{db()->beginTransaction();try{db()->prepare('DELETE FROM vendor_personnel WHERE id=? AND vendor_id=?')->execute([$postedId,$vendorId]);db()->prepare("UPDATE users SET is_active=0 WHERE id=? AND role='user'")->execute([$userId]);db()->commit();$message='Personnel access removed successfully.';}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error='Personnel access could not be removed.';}}
+        else{db()->beginTransaction();try{soft_delete_record('vendor_personnel',$postedId,requested_deletion_reason());db()->prepare('UPDATE vendor_personnel SET is_active=0 WHERE id=? AND vendor_id=?')->execute([$postedId,$vendorId]);db()->prepare("UPDATE users SET is_active=0 WHERE id=? AND role='user'")->execute([$userId]);db()->commit();$message='Personnel access moved to the Recycle Bin.';}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'Personnel access could not be removed.';}}
     }elseif($form['full_name']==='')$error='Enter the personnel name.';
     elseif(!is_valid_email_address($form['email']))$error='Enter a valid login email address.';
     elseif($form['phone']!==''&&!is_valid_phone_number($form['phone']))$error='Enter a valid Ghana phone number.';
@@ -79,7 +80,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception->getMessage();}
     }
 }
-$rows=[];if($vendorId){$statement=db()->prepare('SELECT vp.*,u.full_name,u.email,u.phone,u.force_password_change,adder.full_name added_by FROM vendor_personnel vp INNER JOIN users u ON u.id=vp.user_id LEFT JOIN users adder ON adder.id=vp.added_by_user_id WHERE vp.vendor_id=? ORDER BY vp.is_active DESC,u.full_name');$statement->execute([$vendorId]);$rows=$statement->fetchAll();}
+$rows=[];if($vendorId){$statement=db()->prepare('SELECT vp.*,u.full_name,u.email,u.phone,u.force_password_change,adder.full_name added_by FROM vendor_personnel vp INNER JOIN users u ON u.id=vp.user_id LEFT JOIN users adder ON adder.id=vp.added_by_user_id WHERE vp.vendor_id=? AND vp.deleted_at IS NULL ORDER BY vp.is_active DESC,u.full_name');$statement->execute([$vendorId]);$rows=$statement->fetchAll();}
 $availableStaff=is_admin_user()?db()->query("SELECT u.id,u.full_name,u.email,s.staff_code FROM users u INNER JOIN staff s ON s.user_id=u.id WHERE u.role='staff' AND u.is_active=1 AND s.is_active=1 ORDER BY u.full_name")->fetchAll():[];
 $pageTitle='Personnel Assignment';$breadcrumbs=[['label'=>'POS','url'=>app_url('pos.php')],['label'=>'Personnel Assignment']];$internalBackUrl=app_url('pos.php?view=admin');require_once __DIR__.'/../includes/header.php';
 ?>

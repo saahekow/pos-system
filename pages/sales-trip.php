@@ -843,7 +843,7 @@ require_once __DIR__ . '/../includes/header.php';
     <?php endif; ?>
 
     <?php if($section!==''): ?>
-    <?php $backFallback=$section==='trip'?app_url('marketing.php?view=trip'):app_url('normalized-customer.php'); ?>
+    <?php $backFallback=requested_return_url($section==='trip'?app_url('marketing.php?view=trip'):app_url('normalized-customer.php')); ?>
     <div class="sales-page-back"><a class="secondary-button secondary-button--small" href="<?=e($backFallback)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a></div>
     <?php endif; ?>
 

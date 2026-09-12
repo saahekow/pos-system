@@ -5,6 +5,7 @@ require_module_access('pos');
 ensure_pos_sales_schema();
 ensure_pos_transfer_schema();
 ensure_vendor_personnel_schema();
+ensure_recycle_bin_schema();
 
 $view = (string)($_GET['view'] ?? 'menu');
 $allowedViews = ['menu', 'sales', 'daily', 'history', 'notes', 'refunds', 'transfers'];
@@ -47,7 +48,7 @@ $rows = [];
 $summary = ['sales_count' => 0, 'items_count' => 0, 'sales_total' => 0.0];
 if (in_array($view, $reportViews, true) && ($mode === 'lookup' || ($mode === 'type' && $search !== ''))) {
     if ($view === 'transfers') {
-        $conditions = [];
+        $conditions = ['t.deleted_at IS NULL'];
         $params = [];
         if (!$isManagement) {
             if(($isVendorOwner||$hasAssignedReports)&&$reportVendor){$conditions[]='t.vendor_id = ?';$params[]=(int)$reportVendor['id'];}
@@ -80,7 +81,7 @@ if (in_array($view, $reportViews, true) && ($mode === 'lookup' || ($mode === 'ty
             $summary['sales_total'] += (float)$row['total_amount'];
         }
     } else {
-    $conditions = [];
+    $conditions = ['s.deleted_at IS NULL'];
     $params = [];
     if ($source !== '') {
         $conditions[] = 's.sale_source = ?';
@@ -181,6 +182,8 @@ $reportReturnParams = $_GET;
 $reportReturnUrl = app_url('pos-reports.php' . ($reportReturnParams ? '?' . http_build_query($reportReturnParams) : ''));
 require_once __DIR__ . '/../includes/header.php';
 ?>
+<?php $recycleReturnUrl=safe_app_return_url((string)($_SERVER['REQUEST_URI']??''),app_url('pos-reports.php')); ?>
+<?php if($view!=='menu'):?><div class="report-bin-shortcut"><a href="<?=e(app_url('recycle-bin.php?module=pos&section='.($view==='transfers'?'transfers':($view==='refunds'?'refunds':($view==='notes'?'notes':'sales'))).'&return_to='.rawurlencode($recycleReturnUrl)))?>" title="Open Recycle Bin"><i class="fa-solid fa-trash-can"></i><span>Recycle Bin</span></a></div><?php endif;?>
 <section class="content-panel pos-report-page">
     <div class="management-heading">
         <div><span class="section-kicker"><?=e($source === 'sor' ? 'SoR Reports' : ($source === 'pos' ? 'Direct Sales Reports' : 'POS Reports'))?></span><h1><?=e($titles[$view])?></h1><p><?= $isManagement ? 'Showing records for all users.' : (($isVendorOwner||$hasAssignedReports)?'Showing records for your vendor account.':'Showing only records recorded by you.') ?></p></div>
@@ -193,6 +196,7 @@ require_once __DIR__ . '/../includes/header.php';
             <a class="pos-report-card" href="<?=e(app_url('pos-reports.php?view=notes'.$sourceQuery))?>"><i class="fa-solid fa-note-sticky"></i><span><strong>Notes</strong><small>Notes saved with sales</small></span><i class="fa-solid fa-chevron-right"></i></a>
             <a class="pos-report-card" href="<?=e(app_url('pos-reports.php?view=refunds'.$sourceQuery))?>"><i class="fa-solid fa-rotate-left"></i><span><strong>Refunds</strong><small>Cancelled and refunded sales</small></span><i class="fa-solid fa-chevron-right"></i></a>
             <?php if ($source === ''): ?><a class="pos-report-card" href="<?=e(app_url('pos-reports.php?view=transfers'))?>"><i class="fa-solid fa-truck-arrow-right"></i><span><strong>Transfers</strong><small>Goods dispatched to vendors</small></span><i class="fa-solid fa-chevron-right"></i></a><?php endif; ?>
+            <a class="pos-report-card" href="<?=e(app_url('recycle-bin.php?module=pos&section=sales'))?>"><i class="fa-solid fa-recycle"></i><span><strong>Recycle Bin</strong><small>Review and restore deleted POS records</small></span><i class="fa-solid fa-chevron-right"></i></a>
         </div>
     <?php elseif ($view === 'sales'): ?>
         <div class="pos-report-menu pos-report-menu--two">
@@ -213,7 +217,7 @@ require_once __DIR__ . '/../includes/header.php';
             <form class="pos-report-filter" method="get" data-pos-live-filter="date"><input type="hidden" name="view" value="<?=e($view)?>"><input type="hidden" name="mode" value="lookup"><div class="pos-report-filter__row pos-report-filter__row--date"><label>From<input type="date" name="from" value="<?=e($from)?>"></label><label>To<input type="date" name="to" value="<?=e($to)?>"></label></div><?php if($isManagement):?><div class="pos-report-filter__row pos-report-filter__row--recorder"><label>Recorder type<select name="recorder_type"><option value="">All recorders</option><option value="vendor" <?=$recorderType==='vendor'?'selected':''?>>Vendors</option><option value="staff" <?=$recorderType==='staff'?'selected':''?>>Staff</option></select></label><?php if($recorderType!==''):?><label><?=e(ucfirst($recorderType))?><select name="recorder_user_id" data-popup-select data-popup-search><option value="0">All <?=e($recorderType)?> records</option><?php foreach($recorderOptions as $recorder):?><option value="<?=(int)$recorder['user_id']?>" <?= (int)$recorder['user_id']===$recorderUserId?'selected':'' ?>><?=e((string)$recorder['display_name'])?></option><?php endforeach;?></select></label><?php endif;?></div><?php endif;?><button class="login-button" type="submit"><i class="fa-solid fa-filter"></i><span>Show</span></button></form>
         <?php endif; ?>
 
-        <p class="report-result-count pos-report-result-count"><?=number_format(count($rows))?> result<?=count($rows)===1?'':'s'?> found</p>
+        <p class="report-result-count pos-report-result-count"><i class="fa-solid <?=count($rows)?'fa-list-check':'fa-circle-info'?>" aria-hidden="true"></i><span><?=count($rows)?number_format(count($rows)).' record'.(count($rows)===1?'':'s').' found':'No records found'?></span></p>
         <div class="pos-report-summary">
             <div><span><?= $view==='transfers'?'Transfers':'Sales' ?></span><strong><?=number_format($summary['sales_count'])?></strong></div>
             <div><span><?= $view==='transfers'?'Boxes':'Quantity' ?></span><strong><?=number_format($summary['items_count'])?></strong></div>

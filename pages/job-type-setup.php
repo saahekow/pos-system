@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 require_menu_item_access('setup_customer_types');
 ensure_job_type_schema();
+ensure_recycle_bin_schema();
 
 $pageTitle = 'Customer Type Setup';
 $breadcrumbs = [
@@ -38,10 +39,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Your session expired. Please try again.';
     } elseif ($action === 'delete' && $id) {
         try {
-            db()->prepare('DELETE FROM job_types WHERE id=?')->execute([$id]);
-            $message = 'Job type deleted successfully.';
-        } catch (PDOException $exception) {
-            $error = 'This customer type is already used and cannot be deleted. You can make it inactive instead.';
+            db()->beginTransaction();soft_delete_record('job_type',$id,requested_deletion_reason());db()->prepare('UPDATE job_types SET is_active=0 WHERE id=?')->execute([$id]);db()->commit();
+            $message = 'Customer type moved to the Recycle Bin.';
+        } catch (Throwable $exception) {
+            if(db()->inTransaction())db()->rollBack();$error = $exception instanceof DomainException?$exception->getMessage():'The customer type could not be deleted.';
         }
     } elseif ($name === '') {
         $error = 'Job type name is required.';
@@ -70,6 +71,7 @@ $rows = db()->query(
     'SELECT jt.*,COUNT(c.id) customer_count
      FROM job_types jt
      LEFT JOIN customers c ON c.job_type_id=jt.id
+     WHERE jt.deleted_at IS NULL
      GROUP BY jt.id
      ORDER BY jt.job_type_name'
 )->fetchAll();

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config/app.php';
 ensure_customer_promo_plug_schema();
 require_module_access('registration_records');
 ensure_job_type_schema();
+ensure_recycle_bin_schema();
 
 function registration_edit_upload(string $field): ?string
 {
@@ -89,7 +90,7 @@ if ($type === 'draft') {
     $statement = db()->prepare(
         "SELECT v.id AS visit_id,v.sales_trip_id,v.visit_ref,v.recorded_by_user_id,v.arrival_time,v.departure_time,
                 c.id AS customer_id,c.*,p.business_name,p.bus_loc_ref,p.google_location,p.area,l.town_name,COALESCE(st.trip_code,'ADDENDUM') AS trip_code,dest.destination_key,
-                cs.sales_ref,cs.promo_plug,cs.sale_confirmed,cs.car_picture,
+                NULL AS sales_ref,cs.promo_plug,0 AS sale_confirmed,NULL AS car_picture,
                 (SELECT n.feedback FROM visit_notes n WHERE n.visit_id=v.id ORDER BY n.id DESC LIMIT 1) feedback,
                 (SELECT n.note FROM visit_notes n WHERE n.visit_id=v.id ORDER BY n.id DESC LIMIT 1) notes
          FROM visits v
@@ -97,7 +98,7 @@ if ($type === 'draft') {
          INNER JOIN business_locations p ON p.id=v.bus_loc_id
          LEFT JOIN destinations dest ON dest.id=p.destination_id
          LEFT JOIN locations l ON l.id=p.location_id
-         LEFT JOIN customer_sales cs ON cs.visit_id=v.id
+         LEFT JOIN customer_promo_plugs cs ON cs.visit_id=v.id
          LEFT JOIN sales_trips st ON st.id=v.sales_trip_id
          WHERE v.id=? AND v.record_status='completed'"
     );
@@ -138,14 +139,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $type === 'completed' && (string)($
         try {
             $customerId=(int)($record['customer_id']??0);
             db()->beginTransaction();
-            db()->prepare("DELETE FROM customer_pos_sale_vins WHERE customer_source='visit' AND record_id=?")->execute([$id]);
-            db()->prepare('DELETE FROM visit_notes WHERE visit_id=?')->execute([$id]);
-            db()->prepare('DELETE FROM customer_promo_plugs WHERE visit_id=?')->execute([$id]);
-            db()->prepare('DELETE FROM visits WHERE id=?')->execute([$id]);
-            if($customerId>0){db()->prepare("DELETE FROM customers WHERE id=? AND NOT EXISTS(SELECT 1 FROM visits WHERE customer_id=?) AND NOT EXISTS(SELECT 1 FROM customer_visit_drafts WHERE customer_id=?)")->execute([$customerId,$customerId,$customerId]);}
+            $reason=requested_deletion_reason();soft_delete_record('visit',$id,$reason);
+            if($customerId>0){$other=db()->prepare('SELECT COUNT(*) FROM visits WHERE customer_id=? AND id<>? AND deleted_at IS NULL');$other->execute([$customerId,$id]);if(!(int)$other->fetchColumn()){soft_delete_record('customer',$customerId,$reason);db()->prepare('UPDATE customers SET is_active=0 WHERE id=?')->execute([$customerId]);}}
             db()->commit();
             header('Location: '.$returnTo.(str_contains($returnTo,'?')?'&':'?').'deleted=1');exit;
-        } catch(Throwable $exception) { if(db()->inTransaction())db()->rollBack();$error='The customer registration could not be deleted.'; }
+        } catch(Throwable $exception) { if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The customer registration could not be deleted.'; }
     }
 }
 
@@ -419,7 +417,7 @@ require __DIR__ . '/../includes/header.php';
         <div class="form-grid"><div class="form-field"><label>Promotional Plug</label><input name="promo_plug" value="<?=e((string)($payload['promo_plug']??''))?>"></div><?php if($isTaxiRegistration):?><div class="form-field"><label>Car Picture <span class="muted-text">(optional)</span></label><input name="car_picture" type="file" accept="image/*" data-photo-source-choice><?php if(!empty($payload['car_picture'])):?><small>Picture attached. A new picture will replace it.</small><?php endif;?></div><?php endif;?></div>
             </div>
         </details>
-        <div class="form-actions"><a class="secondary-button" href="<?=e($returnTo)?>">Cancel</a><?php if($type==='completed'):?><button class="danger-button" type="submit" name="form_action" value="delete" formnovalidate data-confirm-title="Delete customer registration?" data-confirm-message="This permanently deletes this visit, its notes, sales, and VIN details. The customer profile is also removed when it has no other records."><i class="fa-solid fa-trash"></i><span>Delete</span></button><?php endif;?><button class="login-button" type="submit" name="form_action" value="save"><i class="fa-solid fa-floppy-disk"></i><span><?=$type==='draft'?'Save / Complete':'Save Changes'?></span></button></div>
+        <div class="form-actions"><a class="secondary-button" href="<?=e($returnTo)?>">Cancel</a><?php if($type==='completed'):?><button class="danger-button" type="submit" name="form_action" value="delete" formnovalidate data-confirm-title="Delete customer registration?" data-confirm-message="This hides the registration from reports and preserves its notes, sales, and VIN details in the Recycle Bin."><i class="fa-solid fa-trash"></i><span>Delete</span></button><?php endif;?><button class="login-button" type="submit" name="form_action" value="save"><i class="fa-solid fa-floppy-disk"></i><span><?=$type==='draft'?'Save / Complete':'Save Changes'?></span></button></div>
     </form>
 </section>
 <script>

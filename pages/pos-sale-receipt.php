@@ -3,6 +3,8 @@ require_once __DIR__ . '/../config/app.php';
 require_module_access('pos');
 ensure_job_type_schema();
 ensure_pos_sales_schema();
+ensure_vendor_receipt_branding_schema();
+ensure_pos_sale_edit_audit_schema();
 
 $saleId=max(0,(int)($_GET['id']??0));
 $statement=db()->prepare(
@@ -12,13 +14,16 @@ $statement=db()->prepare(
             l.town_name,l.mmda_name,l.region_name,u.full_name recorded_by,u.role recorder_role,
             v.id recorder_vendor_id,v.vendor_name recorder_vendor_name,v.phone recorder_vendor_phone,
             v.email recorder_vendor_email,v.area recorder_vendor_area,v.profile_image recorder_vendor_logo,
-            vl.town_name recorder_vendor_town,vl.region_name recorder_vendor_region
+            vl.town_name recorder_vendor_town,vl.region_name recorder_vendor_region,
+            rb.logo_path receipt_logo_path,rb.signature_path receipt_signature_path,rb.show_signature,
+            (SELECT COUNT(*) FROM pos_sale_edit_audit sea WHERE sea.sale_id=s.id) revision_count
      FROM pos_sales s
      LEFT JOIN customers c ON c.id=s.customer_id
      LEFT JOIN locations l ON l.id=s.location_id
      LEFT JOIN users u ON u.id=s.recorded_by_user_id
-     LEFT JOIN vendors v ON v.user_id=s.recorded_by_user_id
+     LEFT JOIN vendors v ON v.id=s.vendor_id OR (s.vendor_id IS NULL AND v.user_id=s.recorded_by_user_id)
      LEFT JOIN locations vl ON vl.id=v.location_id
+     LEFT JOIN vendor_receipt_branding rb ON rb.vendor_id=v.id
      WHERE s.id=? LIMIT 1"
 );
 $statement->execute([$saleId]);
@@ -29,6 +34,9 @@ $receiptVendor=current_vendor_profile();
 $canViewVendorSales=current_user_role()==='vendor'||($receiptPersonnel&&(int)($receiptPersonnel['can_reports']??0)===1);
 $canViewSale=is_admin_user()||current_user_role()==='staff'||(int)$sale['recorded_by_user_id']===(int)current_user_id()||($canViewVendorSales&&$receiptVendor&&(int)($sale['vendor_id']??0)===(int)$receiptVendor['id']);
 if(!$canViewSale){http_response_code(404);exit('Receipt not found.');}
+$canEditReceipt=is_admin_user()||current_user_role()==='staff'||($receiptVendor&&(int)($sale['vendor_id']??0)===(int)$receiptVendor['id']);
+$receiptEdits=[];
+if($canEditReceipt&&(int)($sale['revision_count']??0)>0){$editHistoryStatement=db()->prepare('SELECT sea.edit_reason,sea.edited_at,u.full_name edited_by FROM pos_sale_edit_audit sea LEFT JOIN users u ON u.id=sea.edited_by_user_id WHERE sea.sale_id=? ORDER BY sea.id DESC');$editHistoryStatement->execute([$saleId]);$receiptEdits=$editHistoryStatement->fetchAll();}
 
 $itemStatement=db()->prepare('SELECT * FROM pos_sale_items WHERE sale_id=? ORDER BY id');
 $itemStatement->execute([$saleId]);
@@ -43,12 +51,16 @@ if($items){
 }
 $receiptTotal=$items?array_sum(array_map(static fn(array $item):float=>(float)$item['total_amount'],$items)):(float)$sale['subtotal'];
 $receiptDiscount=$items?array_sum(array_map(static fn(array $item):float=>(float)($item['customer_discount_amount']??0),$items)):(float)($sale['customer_discount_amount']??0);
-$isVendorReceipt=(string)($sale['recorder_role']??'')==='vendor'&&(int)($sale['recorder_vendor_id']??0)>0;
+$isVendorReceipt=(int)($sale['recorder_vendor_id']??0)>0;
 $issuerName=$isVendorReceipt?(string)$sale['recorder_vendor_name']:COMPANY_NAME;
 $issuerPhone=$isVendorReceipt?trim((string)($sale['recorder_vendor_phone']??'')):'';
 $issuerEmail=$isVendorReceipt?trim((string)($sale['recorder_vendor_email']??'')):'';
 $issuerAddress=$isVendorReceipt?implode(', ',array_filter([(string)($sale['recorder_vendor_area']??''),(string)($sale['recorder_vendor_town']??''),(string)($sale['recorder_vendor_region']??'')])):'';
-$issuerLogo=app_url('assets/images/autoplus-logo-receipt.jpg');
+$configuredLogoPath=trim((string)($sale['receipt_logo_path']??''));
+$issuerLogoPath=$isVendorReceipt&&$configuredLogoPath!==''&&is_file(__DIR__.'/../'.$configuredLogoPath)?$configuredLogoPath:'assets/images/autoplus-logo-receipt.jpg';
+$issuerLogo=app_url($issuerLogoPath);
+$configuredSignaturePath=trim((string)($sale['receipt_signature_path']??''));
+$issuerSignature=$isVendorReceipt&&!empty($sale['show_signature'])&&$configuredSignaturePath!==''&&is_file(__DIR__.'/../'.$configuredSignaturePath)?app_url($configuredSignaturePath):'';
 $customerLocation=implode(', ',array_filter([(string)($sale['receipt_area']??''),(string)($sale['town_name']??''),(string)($sale['region_name']??'')]));
 
 $pageTitle='Receipt '.(string)$sale['sale_ref'];
@@ -71,11 +83,13 @@ require_once __DIR__.'/../includes/header.php';
 ?>
 <section class="pos-receipt-page">
     <div class="pos-receipt-actions" aria-label="Receipt actions">
-        <a class="secondary-button" href="<?=e($receiptBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span><?=e($receiptBackLabel)?></span></a>
-        <a class="secondary-button" href="<?=e($recordAnotherUrl)?>"><i class="fa-solid fa-plus"></i><span>Record Another Sale</span></a>
-        <a class="secondary-button" href="<?=e(app_url('pos-sale-receipt-pdf.php?id='.$saleId.'&download=1'))?>"><i class="fa-solid fa-file-arrow-down"></i><span>Download PDF</span></a>
-        <button class="login-button" type="button" data-share-receipt data-pdf-url="<?=e(app_url('pos-sale-receipt-pdf.php?id='.$saleId))?>" data-pdf-name="<?=e((string)$sale['sale_ref'].'-receipt.pdf')?>"><i class="fa-solid fa-share-nodes"></i><span>Share Receipt</span></button>
+        <a class="secondary-button pos-receipt-action pos-receipt-action--back" href="<?=e($receiptBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span><?=e($receiptBackLabel)?></span></a>
+        <a class="secondary-button pos-receipt-action pos-receipt-action--new" href="<?=e($recordAnotherUrl)?>"><i class="fa-solid fa-plus"></i><span>Record Another Sale</span></a>
+        <?php if($canEditReceipt):?><a class="secondary-button pos-receipt-action pos-receipt-action--edit" href="<?=e(app_url('pos-sales.php?edit='.$saleId.'&return_to='.rawurlencode(app_url('pos-sale-receipt.php?id='.$saleId))))?>"><i class="fa-solid fa-pen-to-square"></i><span>Edit Receipt</span></a><?php endif;?>
+        <a class="secondary-button pos-receipt-action pos-receipt-action--download" href="<?=e(app_url('pos-sale-receipt-pdf.php?id='.$saleId.'&download=1'))?>"><i class="fa-solid fa-file-arrow-down"></i><span>Download PDF</span></a>
+        <button class="login-button pos-receipt-action pos-receipt-action--share" type="button" data-share-receipt data-pdf-url="<?=e(app_url('pos-sale-receipt-pdf.php?id='.$saleId))?>" data-pdf-name="<?=e((string)$sale['sale_ref'].'-receipt.pdf')?>"><i class="fa-solid fa-share-nodes"></i><span>Share Receipt</span></button>
     </div>
+    <?php if($receiptEdits):?><details class="pos-receipt-revisions"><summary><i class="fa-solid fa-clock-rotate-left"></i><span>Edit history</span><b><?=count($receiptEdits)?></b><i class="fa-solid fa-chevron-down pos-receipt-revisions__chevron"></i></summary><div><?php foreach($receiptEdits as $revision):?><p><strong><?=e(date('d M Y H:i',strtotime((string)$revision['edited_at'])))?> · <?=e((string)($revision['edited_by']?:'System'))?></strong><span><?=e((string)$revision['edit_reason'])?></span></p><?php endforeach;?></div></details><?php endif;?>
     <article class="pos-receipt" aria-label="Sales receipt">
         <header class="pos-receipt__header">
             <div class="pos-receipt__issuer">
@@ -99,7 +113,7 @@ require_once __DIR__.'/../includes/header.php';
 
         <?php if($receiptDiscount>0):?><dl class="pos-receipt__discount-summary"><div><dt>Regular total</dt><dd>GHS <?=e(number_format($receiptTotal+$receiptDiscount,2))?></dd></div><div><dt>Customer discount</dt><dd>− GHS <?=e(number_format($receiptDiscount,2))?></dd></div></dl><?php endif;?>
         <div class="pos-receipt__total"><span>Total</span><strong>GHS <?=e(number_format($receiptTotal,2))?></strong></div>
-        <footer class="pos-receipt__footer"><p>Thank you for your purchase.</p><small>Recorded by <?=e((string)($sale['recorded_by']?:'System'))?> · <?=e(date('d M Y H:i',strtotime((string)$sale['created_at'])))?></small></footer>
+        <footer class="pos-receipt__footer"><p>Thank you for your purchase.</p><?php if($issuerSignature!==''):?><div class="pos-receipt__signature"><img src="<?=e($issuerSignature)?>" alt="Authorized signature"></div><?php endif;?><small>Recorded by <?=e((string)($sale['recorded_by']?:'System'))?> · <?=e(date('d M Y H:i',strtotime((string)$sale['created_at'])))?></small></footer>
     </article>
 </section>
 <script>document.querySelector('[data-share-receipt]')?.addEventListener('click',async function(){const button=this;const original=button.innerHTML;button.disabled=true;button.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i><span>Preparing...</span>';try{const response=await fetch(button.dataset.pdfUrl,{credentials:'same-origin'});if(!response.ok)throw new Error('Receipt PDF could not be generated.');const blob=await response.blob();const file=new File([blob],button.dataset.pdfName,{type:'application/pdf'});if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({title:'Sales Receipt',text:'Your SPW Sales receipt',files:[file]});}else{const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=button.dataset.pdfName;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}}catch(error){if(error.name!=='AbortError')alert(error.message||'The receipt could not be shared.');}finally{button.disabled=false;button.innerHTML=original;}});</script>

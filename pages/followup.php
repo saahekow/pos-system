@@ -36,11 +36,11 @@ if ($sourceVisitId && $destination) {
     $statement = db()->prepare(
         "SELECT v.*,p.destination_id,p.business_name AS company_name,p.area,p.location_id,p.google_location,p.shop_type_id,
                 c.customer_name AS owner_name,c.phone,c.other_phone,c.vehicle_registration_no,c.supervisor_name,
-                c.supervisor_phone,c.vin_no,cs.sales_ref,cs.promo_plug,cs.sale_confirmed
+                c.supervisor_phone,c.vin_no,NULL AS sales_ref,cs.promo_plug,0 AS sale_confirmed
          FROM visits v
          INNER JOIN customers c ON c.id=v.customer_id
          INNER JOIN business_locations p ON p.id=v.bus_loc_id
-         LEFT JOIN customer_sales cs ON cs.visit_id=v.id
+         LEFT JOIN customer_promo_plugs cs ON cs.visit_id=v.id
          WHERE v.id=? AND p.destination_id=? AND v.visit_type='registration' AND v.record_status='completed'"
     );
     $statement->execute([$sourceVisitId, $destinationId]);
@@ -127,11 +127,11 @@ $destinations = db()->query('SELECT id,destination_name FROM destinations WHERE 
 $visits = [];
 if ($destination) {
     $sql = "SELECT v.id,v.customer_id,p.business_name AS company_name,c.customer_name AS owner_name,c.phone,p.area,p.location_id,
-                   cs.sales_ref,COALESCE(cs.sale_confirmed,v.sale_confirmed) AS sale_confirmed,v.created_at,st.trip_code
+                   NULL AS sales_ref,COALESCE(v.sale_confirmed,0) AS sale_confirmed,v.created_at,st.trip_code
             FROM visits v
             INNER JOIN customers c ON c.id=v.customer_id
             INNER JOIN business_locations p ON p.id=v.bus_loc_id
-            LEFT JOIN customer_sales cs ON cs.visit_id=v.id
+            LEFT JOIN customer_promo_plugs cs ON cs.visit_id=v.id
             LEFT JOIN sales_trips st ON st.id=v.sales_trip_id
             WHERE p.destination_id=? AND v.visit_type='registration' AND v.record_status='completed'
               AND c.is_active=1

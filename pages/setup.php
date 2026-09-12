@@ -7,7 +7,7 @@ $setupPermissionKeys = [
     'setup_accounts', 'setup_roles', 'setup_feedback', 'setup_referrals',
     'setup_commissions', 'setup_destinations', 'setup_locations', 'setup_vendors',
     'setup_shop_types', 'setup_customer_types', 'setup_vehicles',
-    'setup_attendance', 'setup_staff',
+    'setup_staff',
 ];
 if (!array_filter($setupPermissionKeys, 'can_access_menu_item')) {
     http_response_code(403);
@@ -100,13 +100,6 @@ $modules = [
         'description' => 'Manage the car numbers staff can select when starting trips.',
         'icon' => 'fa-solid fa-car-side',
         'url' => app_url('vehicle-setup.php'),
-    ],
-    [
-        'permission' => 'setup_attendance',
-        'title' => 'Attendance Setup',
-        'description' => 'Create attendance sessions and save the GPS attendance point.',
-        'icon' => 'fa-solid fa-calendar-plus',
-        'url' => app_url('attendance-setup.php'),
     ],
     [
         'permission' => 'setup_staff',

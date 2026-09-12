@@ -4,6 +4,7 @@ require_menu_item_access('setup_vendors');
 ensure_destination_visit_schema();
 ensure_vendor_type_schema();
 ensure_user_phone_schema();
+ensure_recycle_bin_schema();
 $vendorProvisioning=provision_unlinked_vendor_accounts();
 
 $pageTitle = 'Vendor Setup';
@@ -62,19 +63,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $linkedUserId = (int) ($statement->fetchColumn() ?: 0);
         db()->beginTransaction();
         try {
-            db()->prepare('DELETE FROM vendor_customers WHERE vendor_id=?')->execute([$postedId]);
-            ensure_vendor_module_assignments_schema();
-            db()->prepare('DELETE FROM vendor_module_assignments WHERE vendor_id=?')->execute([$postedId]);
-            ensure_vendor_town_assignments_schema();
-            db()->prepare('DELETE FROM vendor_town_assignments WHERE vendor_id=?')->execute([$postedId]);
-            db()->prepare('DELETE FROM vendors WHERE id=?')->execute([$postedId]);
-            if ($linkedUserId) db()->prepare("DELETE FROM users WHERE id=? AND role='vendor'")->execute([$linkedUserId]);
+            soft_delete_record('vendor',$postedId,requested_deletion_reason());
+            db()->prepare('UPDATE vendors SET is_active=0 WHERE id=?')->execute([$postedId]);
+            if ($linkedUserId) db()->prepare("UPDATE users SET is_active=0 WHERE id=? AND role='vendor'")->execute([$linkedUserId]);
             db()->commit();
-            $message = 'Vendor and linked account deleted successfully.';
+            $message = 'Vendor moved to the Recycle Bin and linked login disabled.';
             $editId = 0;
         } catch (Throwable $exception) {
             if (db()->inTransaction()) db()->rollBack();
-            $error = 'The vendor account could not be deleted.';
+            $error = $exception instanceof DomainException?$exception->getMessage():'The vendor account could not be deleted.';
         }
     } elseif ($form['vendor_name'] === '') {
         $error = 'Vendor name is required.';

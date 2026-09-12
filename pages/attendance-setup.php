@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config/app.php';
 
 require_menu_item_access('setup_attendance');
 ensure_attendance_schema();
+ensure_recycle_bin_schema();
 
 $pageTitle = 'Attendance Setup';
 $breadcrumbs = [
@@ -17,17 +18,6 @@ $message = '';
 $error = '';
 $editId = max(0, (int) ($_GET['edit'] ?? 0));
 $serviceToEdit = null;
-
-if (isset($_GET['delete'])) {
-    $deleteId = max(0, (int) $_GET['delete']);
-
-    if ($deleteId > 0) {
-        $delete = db()->prepare('DELETE FROM attendance_services WHERE id = ?');
-        $delete->execute([$deleteId]);
-        header('Location: ' . app_url('attendance-setup.php?deleted=1'));
-        exit;
-    }
-}
 
 if (isset($_GET['toggle_status'])) {
     $toggleId = max(0, (int) $_GET['toggle_status']);
@@ -53,7 +43,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $token = (string) ($_POST['csrf_token'] ?? '');
     $formAction = (string) ($_POST['form_action'] ?? 'save_session');
 
-    if ($formAction === 'save_weekday_schedule') {
+    if ($formAction === 'delete_session') {
+        if(!verify_csrf_token($token))$error='Your session expired. Please try again.';
+        else{try{db()->beginTransaction();$deleteId=max(0,(int)($_POST['service_id']??0));soft_delete_record('attendance_service',$deleteId,requested_deletion_reason());db()->prepare("UPDATE attendance_services SET status='inactive' WHERE id=?")->execute([$deleteId]);db()->commit();header('Location: '.app_url('attendance-setup.php?deleted=1'));exit;}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The attendance session could not be deleted.';}}
+    } elseif ($formAction === 'save_weekday_schedule') {
         $name = trim((string) ($_POST['weekday_service_name'] ?? ''));
         $type = trim((string) ($_POST['weekday_service_type'] ?? ''));
         $start = trim((string) ($_POST['weekday_start_time'] ?? ''));
@@ -160,6 +153,7 @@ $services = db()
         'SELECT attendance_services.*, users.full_name AS created_by_name
          FROM attendance_services
          LEFT JOIN users ON users.id = attendance_services.created_by_user_id
+         WHERE attendance_services.deleted_at IS NULL
          ORDER BY service_date DESC, start_time DESC, id DESC
          LIMIT 80'
     )
@@ -358,7 +352,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 <div class="table-actions">
                                     <a class="secondary-button secondary-button--small" href="<?= e(app_url('attendance-setup.php?edit=' . (int) $service['id'])) ?>">Edit</a>
                                     <a class="secondary-button secondary-button--small" href="<?= e(app_url('attendance-setup.php?toggle_status=' . (int) $service['id'])) ?>"><?= $service['status'] === 'active' ? 'Deactivate' : 'Activate' ?></a>
-                                    <a class="secondary-button secondary-button--small" href="<?= e(app_url('attendance-setup.php?delete=' . (int) $service['id'])) ?>" onclick="return confirm('Delete this attendance session?')">Delete</a>
+                                    <form method="post" data-confirm-title="Delete attendance session?" data-confirm-message="This hides the session from reports and keeps it in the Recycle Bin."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_session"><input type="hidden" name="service_id" value="<?=(int)$service['id']?>"><button class="secondary-button secondary-button--small" type="submit">Delete</button></form>
                                 </div>
                             </td>
                         </tr>

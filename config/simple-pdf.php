@@ -6,7 +6,7 @@ final class SimpleReceiptPdf
     private string $content='';
     private float $width=595.28;
     private float $height=841.89;
-    private ?array $jpeg=null;
+    private array $jpegs=[];
 
     public function __construct(){ $this->newPage(); }
     public function y(float $top):float{return $this->height-$top;}
@@ -27,19 +27,21 @@ final class SimpleReceiptPdf
     }
     public function jpeg(string $path,float $x,float $top,float $w,float $h):void{
         if(!is_file($path))return;$info=@getimagesize($path);$data=@file_get_contents($path);if(!$info||!$data||($info[2]??0)!==IMAGETYPE_JPEG)return;
-        $this->jpeg=['data'=>$data,'width'=>(int)$info[0],'height'=>(int)$info[1]];
-        $this->content.=sprintf("q %.2F 0 0 %.2F %.2F %.2F cm /Im1 Do Q\n",$w,$h,$x,$this->y($top+$h));
+        if(!isset($this->jpegs[$path]))$this->jpegs[$path]=['name'=>'Im'.(count($this->jpegs)+1),'data'=>$data,'width'=>(int)$info[0],'height'=>(int)$info[1]];
+        $this->content.=sprintf("q %.2F 0 0 %.2F %.2F %.2F cm /%s Do Q\n",$w,$h,$x,$this->y($top+$h),$this->jpegs[$path]['name']);
     }
     public function output():string{
         if($this->content!==''){$this->pages[]=$this->content;$this->content='';}
         $objects=[];$objects[1]='<< /Type /Catalog /Pages 2 0 R >>';
-        $imageId=$this->jpeg?5:null;$pageIds=[];$contentIds=[];$next=$this->jpeg?6:5;
+        $imageIds=[];$next=5;foreach($this->jpegs as $path=>$image)$imageIds[$path]=$next++;
+        $pageIds=[];$contentIds=[];
         foreach($this->pages as $_){$pageIds[]=$next++;$contentIds[]=$next++;}
         $objects[2]='<< /Type /Pages /Kids ['.implode(' ',array_map(static fn(int $id):string=>"$id 0 R",$pageIds)).'] /Count '.count($pageIds).' >>';
         $objects[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
         $objects[4]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
-        if($this->jpeg)$objects[$imageId]='<< /Type /XObject /Subtype /Image /Width '.$this->jpeg['width'].' /Height '.$this->jpeg['height'].' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '.strlen($this->jpeg['data'])." >>\nstream\n".$this->jpeg['data']."\nendstream";
-        foreach($this->pages as $index=>$stream){$xObject=$imageId?' /XObject << /Im1 '.$imageId.' 0 R >>':'';$objects[$pageIds[$index]]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '.$this->width.' '.$this->height.'] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>'.$xObject.' >> /Contents '.$contentIds[$index].' 0 R >>';$objects[$contentIds[$index]]='<< /Length '.strlen($stream).' >>' . "\nstream\n".$stream."endstream";}
+        foreach($this->jpegs as $path=>$image){$objects[$imageIds[$path]]='<< /Type /XObject /Subtype /Image /Width '.$image['width'].' /Height '.$image['height'].' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '.strlen($image['data'])." >>\nstream\n".$image['data']."\nendstream";}
+        $imageResources=[];foreach($this->jpegs as $path=>$image)$imageResources[]='/'.$image['name'].' '.$imageIds[$path].' 0 R';
+        foreach($this->pages as $index=>$stream){$xObject=$imageResources?' /XObject << '.implode(' ',$imageResources).' >>':'';$objects[$pageIds[$index]]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '.$this->width.' '.$this->height.'] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>'.$xObject.' >> /Contents '.$contentIds[$index].' 0 R >>';$objects[$contentIds[$index]]='<< /Length '.strlen($stream).' >>' . "\nstream\n".$stream."endstream";}
         ksort($objects);$pdf="%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";$offsets=[0];
         foreach($objects as $id=>$object){$offsets[$id]=strlen($pdf);$pdf.="$id 0 obj\n$object\nendobj\n";}
         $xref=strlen($pdf);$count=max(array_keys($objects))+1;$pdf.="xref\n0 $count\n0000000000 65535 f \n";

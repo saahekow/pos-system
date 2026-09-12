@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 
 require_menu_item_access('setup_vehicles');
+ensure_recycle_bin_schema();
 
 $pageTitle = 'Vehicle Setup';
 $breadcrumbs = [
@@ -19,7 +20,7 @@ $carNumber = '';
 $status = 'active';
 
 if ($editVehicleId > 0) {
-    $statement = db()->prepare('SELECT id, plate_number, status FROM vehicles WHERE id = ? LIMIT 1');
+    $statement = db()->prepare('SELECT id, plate_number, status FROM vehicles WHERE id = ? AND deleted_at IS NULL LIMIT 1');
     $statement->execute([$editVehicleId]);
     $vehicle = $statement->fetch();
 
@@ -46,14 +47,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Select a valid vehicle to delete.';
         } else {
             try {
-                $statement = db()->prepare('DELETE FROM vehicles WHERE id = ?');
-                $statement->execute([$postedVehicleId]);
-                $message = 'Vehicle deleted successfully.';
+                db()->beginTransaction();soft_delete_record('vehicle',$postedVehicleId,requested_deletion_reason());db()->prepare("UPDATE vehicles SET status='inactive' WHERE id=?")->execute([$postedVehicleId]);db()->commit();
+                $message = 'Vehicle moved to the Recycle Bin.';
                 $carNumber = '';
                 $status = 'active';
                 $editVehicleId = 0;
-            } catch (PDOException $exception) {
-                $error = 'This vehicle is already linked to records, so it cannot be deleted. You can deactivate it instead.';
+            } catch (Throwable $exception) {
+                if(db()->inTransaction())db()->rollBack();$error = $exception instanceof DomainException?$exception->getMessage():'The vehicle could not be deleted.';
             }
         }
     } elseif ($carNumber === '') {
@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $vehicles = db()
-    ->query('SELECT id, plate_number, status, created_at FROM vehicles ORDER BY status = "active" DESC, plate_number')
+    ->query('SELECT id, plate_number, status, created_at FROM vehicles WHERE deleted_at IS NULL ORDER BY status = "active" DESC, plate_number')
     ->fetchAll();
 
 require_once __DIR__ . '/../includes/header.php';

@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 
 require_menu_item_access('setup_roles');
+ensure_recycle_bin_schema();
 
 $pageTitle = 'Role Setup';
 $breadcrumbs = [
@@ -43,9 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($roleId <= 0) {
             $error = 'Select a valid role to delete.';
         } else {
-            $statement = db()->prepare('DELETE FROM staff_roles WHERE id = ?');
-            $statement->execute([$roleId]);
-            $message = 'Role deleted successfully.';
+            try{db()->beginTransaction();soft_delete_record('staff_role',$roleId,requested_deletion_reason());db()->prepare('UPDATE staff_roles SET is_active=0 WHERE id=?')->execute([$roleId]);db()->commit();$message='Role moved to the Recycle Bin.';}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The role could not be deleted.';}
             $roleName = '';
             $status = '1';
             $editRoleId = 0;
@@ -80,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $roles = db()
-    ->query('SELECT id, role_name, is_active, created_at FROM staff_roles ORDER BY role_name')
+    ->query('SELECT id, role_name, is_active, created_at FROM staff_roles WHERE deleted_at IS NULL ORDER BY role_name')
     ->fetchAll();
 
 require_once __DIR__ . '/../includes/header.php';

@@ -592,7 +592,30 @@ function ensure_pos_plug_commission_schema(): void
             if (!(int)$constraintExists->fetchColumn()) db()->exec('ALTER TABLE pos_transfer_items ADD CONSTRAINT fk_pos_transfer_items_commission FOREIGN KEY (commission_id) REFERENCES plug_commissions(id) ON DELETE SET NULL ON UPDATE CASCADE');
         }
     });
+    run_app_migration('20260909_add_effective_vendor_commissions', function (): void {
+        if (!db_column_exists('plug_commissions','vendor_id')) db()->exec('ALTER TABLE plug_commissions ADD COLUMN vendor_id INT UNSIGNED NULL AFTER spark_plug_id');
+        if (!db_column_exists('plug_commissions','effective_from')) db()->exec('ALTER TABLE plug_commissions ADD COLUMN effective_from DATE NOT NULL DEFAULT \'2026-01-01\' AFTER commission_percentage');
+        if (!db_column_exists('plug_commissions','effective_to')) db()->exec('ALTER TABLE plug_commissions ADD COLUMN effective_to DATE NULL AFTER effective_from');
+        $indexCheck=db()->prepare('SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND INDEX_NAME=?');
+        $indexCheck->execute(['plug_commissions','uq_plug_commissions_plug']);
+        if ((int)$indexCheck->fetchColumn()) db()->exec('ALTER TABLE plug_commissions DROP INDEX uq_plug_commissions_plug');
+        $indexCheck->execute(['plug_commissions','idx_plug_commissions_lookup']);
+        if (!(int)$indexCheck->fetchColumn()) db()->exec('ALTER TABLE plug_commissions ADD KEY idx_plug_commissions_lookup (spark_plug_id,vendor_id,is_active,effective_from,effective_to)');
+    });
+    run_app_migration('20260910_remove_legacy_commission_unique_index', function (): void {
+        $indexCheck=db()->prepare('SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND INDEX_NAME=? AND NON_UNIQUE=0');
+        foreach(['uq_plug_discounts_plug','uq_plug_commissions_plug'] as $indexName){$indexCheck->execute(['plug_commissions',$indexName]);if((int)$indexCheck->fetchColumn())db()->exec('ALTER TABLE plug_commissions DROP INDEX `'.$indexName.'`');}
+    });
     $schemaReady = true;
+}
+
+function pos_commission_rule_for(int $sparkPlugId, ?int $vendorId, string $saleDate): ?array
+{
+    if ($sparkPlugId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/',$saleDate)) return null;
+    $statement=db()->prepare("SELECT id,vendor_id,commission_percentage,effective_from,effective_to FROM plug_commissions WHERE spark_plug_id=? AND is_active=1 AND (vendor_id=? OR vendor_id IS NULL) AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY (vendor_id IS NOT NULL) DESC,effective_from DESC,id DESC LIMIT 1");
+    $statement->execute([$sparkPlugId,$vendorId?:0,$saleDate,$saleDate]);
+    $rule=$statement->fetch();
+    return $rule?:null;
 }
 
 function ensure_pos_transfer_schema(): void
@@ -780,18 +803,10 @@ function ensure_customer_promo_plug_schema(): void
     }
     db()->exec("DELETE FROM customer_promo_plugs WHERE promo_plug IS NULL OR TRIM(promo_plug)=''");
     db()->exec('ALTER TABLE customer_promo_plugs MODIFY promo_plug VARCHAR(160) NOT NULL');
-    db()->exec("CREATE OR REPLACE VIEW customer_sales AS
-        SELECT id,CONCAT('PROMO-',id) AS sale_record_ref,visit_id,customer_id,bus_loc_id,
-               NULL AS sales_ref,promo_plug,0 AS sale_confirmed,NULL AS car_picture,
-               recorded_by_user_id,created_at,updated_at
-        FROM customer_promo_plugs");
     });
     run_app_migration('20260828_repair_customer_sales_view_definer', function (): void {
-        db()->exec("CREATE OR REPLACE ALGORITHM=UNDEFINED SQL SECURITY INVOKER VIEW customer_sales AS
-            SELECT id,CONCAT('PROMO-',id) AS sale_record_ref,visit_id,customer_id,bus_loc_id,
-                   NULL AS sales_ref,promo_plug,0 AS sale_confirmed,NULL AS car_picture,
-                   recorded_by_user_id,created_at,updated_at
-            FROM customer_promo_plugs");
+        // Shared hosting providers commonly deny CREATE VIEW. The application
+        // reads customer_promo_plugs directly and does not require a view.
     });
     $schemaReady = true;
 }
@@ -1041,6 +1056,72 @@ function ensure_pos_sales_schema(): void
             db()->exec('UPDATE plug_price_history SET markup=25.00, wholesale=ROUND(price * 0.75, 2)');
         }
     });
+    $schemaReady = true;
+}
+
+function ensure_pos_credit_payments_schema(): void
+{
+    static $schemaReady = false;
+    if ($schemaReady) return;
+
+    ensure_pos_sales_schema();
+    run_app_migration('20260912_create_pos_credit_payments', function (): void {
+        if (!db_column_exists('pos_sales', 'payment_type')) {
+            db()->exec("ALTER TABLE pos_sales ADD COLUMN payment_type ENUM('cash','credit') NOT NULL DEFAULT 'cash' AFTER amount_less_commission, ADD INDEX idx_pos_sales_payment_type (payment_type,status)");
+        }
+        db()->exec("CREATE TABLE IF NOT EXISTS pos_credit_payments (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            payment_ref VARCHAR(30) NOT NULL,
+            sale_id BIGINT UNSIGNED NOT NULL,
+            customer_id BIGINT UNSIGNED NOT NULL,
+            payment_date DATE NOT NULL,
+            amount DECIMAL(14,2) NOT NULL,
+            status ENUM('completed','cancelled') NOT NULL DEFAULT 'completed',
+            recorded_by_user_id INT UNSIGNED NULL,
+            cancelled_by_user_id INT UNSIGNED NULL,
+            cancellation_reason VARCHAR(255) NULL,
+            cancelled_at DATETIME NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_pos_credit_payments_ref (payment_ref),
+            KEY idx_pos_credit_payments_sale (sale_id,status,payment_date),
+            KEY idx_pos_credit_payments_customer (customer_id,payment_date),
+            KEY idx_pos_credit_payments_date (payment_date),
+            KEY idx_pos_credit_payments_recorded_by (recorded_by_user_id),
+            CONSTRAINT fk_pos_credit_payments_sale FOREIGN KEY (sale_id) REFERENCES pos_sales(id) ON UPDATE CASCADE,
+            CONSTRAINT fk_pos_credit_payments_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON UPDATE CASCADE,
+            CONSTRAINT chk_pos_credit_payments_amount CHECK (amount > 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    });
+    run_app_migration('20260912_link_credit_payments_to_sales', function (): void {
+        if (!db_column_exists('pos_sales', 'payment_type')) {
+            db()->exec("ALTER TABLE pos_sales ADD COLUMN payment_type ENUM('cash','credit') NOT NULL DEFAULT 'cash' AFTER amount_less_commission, ADD INDEX idx_pos_sales_payment_type (payment_type,status)");
+        }
+    });
+    run_app_migration('20260912_require_credit_payment_customer', function (): void {
+        db()->exec('UPDATE pos_credit_payments p INNER JOIN pos_sales s ON s.id=p.sale_id SET p.customer_id=s.customer_id WHERE p.customer_id IS NULL AND s.customer_id IS NOT NULL');
+        $missingCustomer=(int)db()->query('SELECT COUNT(1) FROM pos_credit_payments WHERE customer_id IS NULL')->fetchColumn();
+        if($missingCustomer>0)throw new RuntimeException('Credit payments without a sale customer must be corrected before this upgrade can continue.');
+        $foreignKeyCheck=db()->prepare("SELECT COUNT(1) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME='pos_credit_payments' AND CONSTRAINT_NAME='fk_pos_credit_payments_customer'");
+        $foreignKeyCheck->execute();
+        if((int)$foreignKeyCheck->fetchColumn())db()->exec('ALTER TABLE pos_credit_payments DROP FOREIGN KEY fk_pos_credit_payments_customer');
+        db()->exec('ALTER TABLE pos_credit_payments MODIFY customer_id BIGINT UNSIGNED NOT NULL, ADD CONSTRAINT fk_pos_credit_payments_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON UPDATE CASCADE');
+    });
+    run_app_migration('20260912_simplify_credit_payments', function (): void {
+        foreach(['payment_method','transaction_ref','note'] as $column){
+            if(db_column_exists('pos_credit_payments',$column))db()->exec('ALTER TABLE pos_credit_payments DROP COLUMN `'.$column.'`');
+        }
+    });
+    run_app_migration('20260912_rename_credit_payment_statuses', function (): void {
+        db()->exec("ALTER TABLE pos_credit_payments MODIFY status ENUM('posted','voided','completed','cancelled') NOT NULL DEFAULT 'completed'");
+        db()->exec("UPDATE pos_credit_payments SET status='completed' WHERE status='posted'");
+        db()->exec("UPDATE pos_credit_payments SET status='cancelled' WHERE status='voided'");
+        db()->exec("ALTER TABLE pos_credit_payments MODIFY status ENUM('completed','cancelled') NOT NULL DEFAULT 'completed'");
+        if(db_column_exists('pos_credit_payments','voided_by_user_id'))db()->exec('ALTER TABLE pos_credit_payments CHANGE voided_by_user_id cancelled_by_user_id INT UNSIGNED NULL');
+        if(db_column_exists('pos_credit_payments','void_reason'))db()->exec('ALTER TABLE pos_credit_payments CHANGE void_reason cancellation_reason VARCHAR(255) NULL');
+        if(db_column_exists('pos_credit_payments','voided_at'))db()->exec('ALTER TABLE pos_credit_payments CHANGE voided_at cancelled_at DATETIME NULL');
+    });
+
     $schemaReady = true;
 }
 
@@ -1610,7 +1691,9 @@ function safe_app_return_url(string $candidate, string $fallback = ''): string
 
 function requested_return_url(string $fallback): string
 {
-    return safe_app_return_url((string)($_GET['return_to'] ?? $_POST['return_to'] ?? ''), $fallback);
+    $explicit = safe_app_return_url((string)($_GET['return_to'] ?? $_POST['return_to'] ?? ''), '');
+    if ($explicit !== '') return $explicit;
+    return $fallback;
 }
 
 function asset_url(string $path): string
@@ -2144,12 +2227,6 @@ function application_modules(): array
             'icon' => 'fa-solid fa-barcode',
             'url' => app_url('vin-search.php'),
         ],
-        'attendance' => [
-            'title' => 'Staff Attendance',
-            'description' => 'Use GPS to mark workplace attendance for today.',
-            'icon' => 'fa-solid fa-calendar-check',
-            'url' => app_url('attendance.php'),
-        ],
         'feedback' => [
             'title' => 'Feedback',
             'description' => 'Review driver, staff, and operational feedback records.',
@@ -2435,7 +2512,6 @@ function staff_child_menu_definitions(): array
         'setup_shop_types'=>['group'=>'Setup','title'=>'Shop Type Setup','description'=>'Manage shop type options.','icon'=>'fa-solid fa-store'],
         'setup_customer_types'=>['group'=>'Setup','title'=>'Customer Type Setup','description'=>'Manage customer type choices.','icon'=>'fa-solid fa-briefcase'],
         'setup_vehicles'=>['group'=>'Setup','title'=>'Vehicle Setup','description'=>'Manage vehicles available to trips.','icon'=>'fa-solid fa-car-side'],
-        'setup_attendance'=>['group'=>'Setup','title'=>'Attendance Setup','description'=>'Manage attendance sessions and GPS locations.','icon'=>'fa-solid fa-calendar-plus'],
         'setup_staff'=>['group'=>'Setup','title'=>'Staff Setup','description'=>'Manage staff profiles and team records.','icon'=>'fa-solid fa-id-card-clip'],
         'data_vin_search_1'=>['group'=>'Data Management','title'=>'VIN Search 1','description'=>'Use the current VIN Search service.','icon'=>'fa-solid fa-barcode'],
         'data_reports'=>['group'=>'Data Management','title'=>'Reports','description'=>'Review saved VIN searches.','icon'=>'fa-solid fa-chart-column'],
@@ -2480,7 +2556,7 @@ function can_access_menu_item(string $key): bool
         'marketing_report_trip'=>['reports'],'marketing_report_location'=>['reports'],'marketing_report_customer'=>['reports'],'marketing_report_notes'=>['reports'],'marketing_report_promo'=>['reports'],'marketing_report_vendors'=>['reports'],
         'pos_shop_sales'=>['pos'],'pos_trip_sales'=>['pos'],'pos_promo'=>['pos'],'pos_transfer'=>['pos'],'pos_refund'=>['pos'],'pos_audit'=>['pos'],'pos_reports'=>['pos'],
         'admin_vehicle_log'=>['vehicle_log'],'admin_reports'=>['reports'],
-        'setup_accounts'=>['admin'],'setup_roles'=>['admin'],'setup_feedback'=>['admin'],'setup_referrals'=>['admin'],'setup_commissions'=>['admin'],'setup_destinations'=>['admin'],'setup_locations'=>['admin'],'setup_vendors'=>['admin'],'setup_shop_types'=>['admin'],'setup_customer_types'=>['admin'],'setup_vehicles'=>['admin'],'setup_attendance'=>['admin'],'setup_staff'=>['admin'],
+        'setup_accounts'=>['admin'],'setup_roles'=>['admin'],'setup_feedback'=>['admin'],'setup_referrals'=>['admin'],'setup_commissions'=>['admin'],'setup_destinations'=>['admin'],'setup_locations'=>['admin'],'setup_vendors'=>['admin'],'setup_shop_types'=>['admin'],'setup_customer_types'=>['admin'],'setup_vehicles'=>['admin'],'setup_staff'=>['admin'],
         'data_vin_search_1'=>['vin_search'],'data_reports'=>['vin_search'],
     ];
     if(current_user_role()==='staff'&&in_array($key,['marketing_report_trip','marketing_report_location','marketing_report_customer','marketing_report_notes','marketing_report_promo','marketing_report_vendors','admin_reports'],true))return true;
@@ -2516,7 +2592,7 @@ function can_access_module(string $moduleKey): bool
             'pos'=>['marketing_sales','pos_shop_sales','pos_trip_sales','pos_promo','pos_transfer','pos_refund','pos_audit','pos_reports'],
             'reports'=>['marketing_report_trip','marketing_report_location','marketing_report_customer','marketing_report_notes','marketing_report_promo','marketing_report_vendors','admin_reports'],
             'vehicle_log'=>['admin_vehicle_log'],'vin_search'=>['data_vin_search_1','data_reports'],
-            'admin'=>['setup_accounts','setup_roles','setup_feedback','setup_referrals','setup_commissions','setup_destinations','setup_locations','setup_vendors','setup_shop_types','setup_customer_types','setup_vehicles','setup_attendance','setup_staff'],
+            'admin'=>['setup_accounts','setup_roles','setup_feedback','setup_referrals','setup_commissions','setup_destinations','setup_locations','setup_vendors','setup_shop_types','setup_customer_types','setup_vehicles','setup_staff'],
         ];
         if(isset($childMap[$moduleKey])){foreach($childMap[$moduleKey] as $childKey){if(can_access_menu_item($childKey))return true;}return false;}
     }
@@ -3021,7 +3097,7 @@ function next_sales_trip_ref_no(): string
     return next_project_reference('trip');
 }
 
-function next_project_reference(string $type): string
+function next_project_reference(string $type, ?string $prefixOverride = null): string
 {
     $definitions = [
         'trip' => ['sequence' => 'sales_trip', 'table' => 'sales_trips', 'column' => 'trip_code', 'prefix' => 'TRIP', 'padding' => 5],
@@ -3080,13 +3156,171 @@ function next_project_reference(string $type): string
         }
 
         $padding = (int)($definition['padding'] ?? 3);
-        return $definition['prefix'] . '-' . str_pad((string)$nextValue, $padding, '0', STR_PAD_LEFT);
+        $prefix = trim((string)$prefixOverride);
+        if ($prefix === '' || !preg_match('/^[A-Z0-9]+$/', $prefix)) {
+            $prefix = $definition['prefix'];
+        }
+        return $prefix . '-' . str_pad((string)$nextValue, $padding, '0', STR_PAD_LEFT);
     } catch (Throwable $exception) {
         if ($ownsTransaction && $connection->inTransaction()) {
             $connection->rollBack();
         }
         throw $exception;
     }
+}
+
+function ensure_vendor_receipt_branding_schema(): void
+{
+    static $schemaReady = false;
+    if ($schemaReady) return;
+    run_app_migration('20260908_create_vendor_receipt_branding', function (): void {
+        db()->exec("CREATE TABLE IF NOT EXISTS vendor_receipt_branding (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            vendor_id INT UNSIGNED NOT NULL,
+            logo_path VARCHAR(255) NULL,
+            signature_path VARCHAR(255) NULL,
+            show_signature TINYINT(1) NOT NULL DEFAULT 0,
+            updated_by_user_id INT UNSIGNED NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_vendor_receipt_branding_vendor (vendor_id),
+            KEY idx_vendor_receipt_branding_updated_by (updated_by_user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    });
+    $schemaReady = true;
+}
+
+function ensure_pos_sale_edit_audit_schema(): void
+{
+    static $schemaReady = false;
+    if ($schemaReady) return;
+    run_app_migration('20260908_create_pos_sale_edit_audit', function (): void {
+        db()->exec("CREATE TABLE IF NOT EXISTS pos_sale_edit_audit (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            sale_id BIGINT UNSIGNED NOT NULL,
+            edit_reason VARCHAR(1000) NOT NULL,
+            before_snapshot LONGTEXT NOT NULL,
+            after_snapshot LONGTEXT NOT NULL,
+            edited_by_user_id INT UNSIGNED NULL,
+            edited_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_pos_sale_edit_audit_sale (sale_id,edited_at),
+            KEY idx_pos_sale_edit_audit_user (edited_by_user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    });
+    $schemaReady = true;
+}
+
+function vendor_sales_reference_prefix(?string $vendorName): string
+{
+    $name = trim((string)$vendorName);
+    if ($name === '') return 'POS';
+
+    if (function_exists('iconv')) {
+        $asciiName = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name);
+        if ($asciiName !== false) $name = $asciiName;
+    }
+
+    $words = preg_split('/[^A-Za-z0-9]+/', $name, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    if (!$words) return 'POS';
+
+    if (count($words) === 1) {
+        $prefix = substr($words[0], 0, 2);
+    } else {
+        $prefix = substr($words[0], 0, 1) . substr($words[count($words) - 1], 0, 1);
+    }
+
+    $prefix = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $prefix) ?? '');
+    return $prefix !== '' ? $prefix : 'POS';
+}
+
+function next_vendor_sales_reference(?string $vendorName): string
+{
+    return next_project_reference('pos_sale', vendor_sales_reference_prefix($vendorName));
+}
+
+function recyclable_record_types(): array
+{
+    return [
+        'trip' => ['table'=>'sales_trips','module'=>'marketing','section'=>'visit-summary','label'=>'Trip','reference'=>'trip_code'],
+        'visit' => ['table'=>'visits','module'=>'marketing','section'=>'visits','label'=>'Customer Visit','reference'=>'visit_ref'],
+        'legacy_visit' => ['table'=>'destination_visits','module'=>'marketing','section'=>'visits','label'=>'Customer Visit','reference'=>'id'],
+        'location' => ['table'=>'business_locations','module'=>'marketing','section'=>'registrations','label'=>'Business Location','reference'=>'bus_loc_ref'],
+        'customer' => ['table'=>'customers','module'=>'marketing','section'=>'customers','label'=>'Customer','reference'=>'customer_ref'],
+        'staff' => ['table'=>'staff','module'=>'marketing','section'=>'staff','label'=>'Staff','reference'=>'staff_code'],
+        'vehicle' => ['table'=>'vehicles','module'=>'marketing','section'=>'vehicles','label'=>'Vehicle','reference'=>'plate_number'],
+        'attendance_service' => ['table'=>'attendance_services','module'=>'marketing','section'=>'attendance','label'=>'Attendance Session','reference'=>'service_name'],
+        'destination' => ['table'=>'destinations','module'=>'marketing','section'=>'registrations','label'=>'Destination','reference'=>'destination_name'],
+        'feedback_option' => ['table'=>'visit_feedback_options','module'=>'marketing','section'=>'feedback','label'=>'Feedback Option','reference'=>'feedback_label'],
+        'job_type' => ['table'=>'job_types','module'=>'marketing','section'=>'registrations','label'=>'Customer Type','reference'=>'job_type_name'],
+        'staff_role' => ['table'=>'staff_roles','module'=>'marketing','section'=>'staff','label'=>'Staff Role','reference'=>'role_name'],
+        'shop_type' => ['table'=>'shop_types','module'=>'marketing','section'=>'registrations','label'=>'Shop Type','reference'=>'shop_type_name'],
+        'referral_source' => ['table'=>'pos_referral_sources','module'=>'pos','section'=>'sales','label'=>'Referral Source','reference'=>'source_name'],
+        'vendor_customer' => ['table'=>'vendor_customers','module'=>'vendor','section'=>'customers','label'=>'Vendor Customer','reference'=>'id'],
+        'vendor' => ['table'=>'vendors','module'=>'vendor','section'=>'vendors','label'=>'Vendor','reference'=>'id'],
+        'vendor_personnel' => ['table'=>'vendor_personnel','module'=>'vendor','section'=>'personnel','label'=>'Vendor Personnel','reference'=>'id'],
+        'sale' => ['table'=>'pos_sales','module'=>'pos','section'=>'sales','label'=>'Sale','reference'=>'sale_ref'],
+        'transfer' => ['table'=>'pos_transfers','module'=>'pos','section'=>'transfers','label'=>'Transfer','reference'=>'transfer_ref'],
+    ];
+}
+
+function ensure_recycle_bin_schema(): void
+{
+    static $ready=false;if($ready)return;
+    db()->exec("CREATE TABLE IF NOT EXISTS record_deletions (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        entity_type VARCHAR(40) NOT NULL,
+        entity_id BIGINT UNSIGNED NOT NULL,
+        module_key VARCHAR(40) NOT NULL,
+        section_key VARCHAR(40) NOT NULL,
+        record_label VARCHAR(160) NOT NULL,
+        record_reference VARCHAR(100) NULL,
+        deletion_reason TEXT NOT NULL,
+        deleted_by_user_id INT UNSIGNED NULL,
+        deleted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        restored_by_user_id INT UNSIGNED NULL,
+        restored_at DATETIME NULL,
+        KEY idx_record_deletions_bin (module_key,section_key,restored_at,deleted_at),
+        KEY idx_record_deletions_entity (entity_type,entity_id,restored_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    run_app_migration('20260910_move_deleted_trips_to_trip_summary', function (): void {
+        db()->exec("UPDATE record_deletions SET section_key='visit-summary' WHERE entity_type='trip' AND module_key='marketing' AND section_key='activity'");
+    });
+    run_app_migration('20260910_move_deleted_customers_to_customers', function (): void {
+        db()->exec("UPDATE record_deletions SET section_key='customers' WHERE entity_type='customer' AND module_key='marketing' AND section_key='registrations'");
+    });
+    foreach(recyclable_record_types() as $definition){$table=$definition['table'];if(!db_table_exists($table))continue;if(!db_column_exists($table,'deleted_at'))db()->exec("ALTER TABLE `$table` ADD COLUMN deleted_at DATETIME NULL, ADD INDEX `idx_{$table}_deleted_at` (deleted_at)");if(!db_column_exists($table,'deleted_by_user_id'))db()->exec("ALTER TABLE `$table` ADD COLUMN deleted_by_user_id INT UNSIGNED NULL");if(!db_column_exists($table,'deletion_reason'))db()->exec("ALTER TABLE `$table` ADD COLUMN deletion_reason TEXT NULL");}
+    $ready=true;
+}
+
+function requested_deletion_reason(): string
+{
+    $reason=trim((string)($_POST['deletion_reason']??''));
+    if(strlen($reason)<5)throw new DomainException('Please write a clear reason for deleting this record (at least 5 characters).');
+    return $reason;
+}
+
+function soft_delete_record(string $entityType,int $entityId,string $reason): void
+{
+    ensure_recycle_bin_schema();$types=recyclable_record_types();if(!isset($types[$entityType])||$entityId<=0)throw new InvalidArgumentException('Unsupported record type.');
+    $definition=$types[$entityType];$table=$definition['table'];$reference=$definition['reference'];
+    $statement=db()->prepare("SELECT `$reference` FROM `$table` WHERE id=? AND deleted_at IS NULL FOR UPDATE");$statement->execute([$entityId]);$recordReference=$statement->fetchColumn();if($recordReference===false)throw new DomainException('This record is already deleted or no longer exists.');
+    db()->prepare("UPDATE `$table` SET deleted_at=NOW(),deleted_by_user_id=?,deletion_reason=? WHERE id=?")->execute([current_user_id(),$reason,$entityId]);
+    db()->prepare('INSERT INTO record_deletions(entity_type,entity_id,module_key,section_key,record_label,record_reference,deletion_reason,deleted_by_user_id) VALUES(?,?,?,?,?,?,?,?)')->execute([$entityType,$entityId,$definition['module'],$definition['section'],$definition['label'],(string)$recordReference,$reason,current_user_id()]);
+}
+
+function restore_soft_deleted_record(int $deletionId): void
+{
+    ensure_recycle_bin_schema();$statement=db()->prepare('SELECT * FROM record_deletions WHERE id=? AND restored_at IS NULL FOR UPDATE');$statement->execute([$deletionId]);$deletion=$statement->fetch();if(!$deletion)throw new DomainException('This deleted record is no longer available to restore.');
+    $types=recyclable_record_types();$entityType=(string)$deletion['entity_type'];if(!isset($types[$entityType]))throw new DomainException('This record type cannot be restored here.');$table=$types[$entityType]['table'];
+    $update=db()->prepare("UPDATE `$table` SET deleted_at=NULL,deleted_by_user_id=NULL,deletion_reason=NULL WHERE id=? AND deleted_at IS NOT NULL");$update->execute([(int)$deletion['entity_id']]);if(!$update->rowCount())throw new DomainException('The original record could not be restored.');
+    if(in_array($entityType,['location','customer','vendor','staff','vendor_personnel','destination','feedback_option','job_type','staff_role','shop_type','referral_source'],true))db()->prepare("UPDATE `$table` SET is_active=1 WHERE id=?")->execute([(int)$deletion['entity_id']]);
+    if($entityType==='attendance_service')db()->prepare("UPDATE attendance_services SET status='active' WHERE id=?")->execute([(int)$deletion['entity_id']]);
+    if($entityType==='vehicle')db()->prepare("UPDATE vehicles SET status='active' WHERE id=?")->execute([(int)$deletion['entity_id']]);
+    if($entityType==='legacy_visit')db()->prepare('UPDATE destination_visits SET deleted_at=NULL,deleted_by_user_id=NULL,deletion_reason=NULL WHERE parent_visit_id=?')->execute([(int)$deletion['entity_id']]);
+    if($entityType==='vendor')db()->prepare("UPDATE users u INNER JOIN vendors v ON v.user_id=u.id SET u.is_active=1 WHERE v.id=? AND u.role='vendor'")->execute([(int)$deletion['entity_id']]);
+    if($entityType==='staff')db()->prepare("UPDATE users u INNER JOIN staff s ON s.user_id=u.id SET u.is_active=1 WHERE s.id=? AND u.role='staff'")->execute([(int)$deletion['entity_id']]);
+    if($entityType==='vendor_personnel')db()->prepare("UPDATE users u INNER JOIN vendor_personnel vp ON vp.user_id=u.id SET u.is_active=1 WHERE vp.id=? AND u.role='user'")->execute([(int)$deletion['entity_id']]);
+    db()->prepare('UPDATE record_deletions SET restored_at=NOW(),restored_by_user_id=? WHERE id=?')->execute([current_user_id(),$deletionId]);
 }
 
 function current_display_date(): string

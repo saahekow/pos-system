@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 require_auth();
 ensure_destination_visit_schema();
+ensure_recycle_bin_schema();
 
 function save_visit_edit_upload(string $field, array $types, int $maxBytes): ?string
 {
@@ -31,7 +32,7 @@ $allowedReturnPaths = array_map(static function (string $url): string { return (
 if (!is_array($returnParts) || isset($returnParts['scheme']) || isset($returnParts['host']) || !in_array((string) ($returnParts['path'] ?? ''), $allowedReturnPaths, true)) {
     $returnTo = '';
 }
-$statement = db()->prepare("SELECT dv.*,d.destination_name,d.destination_key FROM destination_visits dv INNER JOIN destinations d ON d.id=dv.destination_id WHERE dv.id=? AND dv.visit_type='registration'");
+$statement = db()->prepare("SELECT dv.*,d.destination_name,d.destination_key FROM destination_visits dv INNER JOIN destinations d ON d.id=dv.destination_id WHERE dv.id=? AND dv.deleted_at IS NULL AND dv.visit_type='registration'");
 $statement->execute([$id]); $visit = $statement->fetch();
 if (!$visit) { http_response_code(404); $pageTitle='Visit Not Found'; $breadcrumbs=[['label'=>'Home','url'=>app_url('index.php')],['label'=>'Visit Not Found']]; require __DIR__.'/../includes/header.php'; echo '<section class="management-panel"><p class="empty-state">Select a valid registration visit.</p></section>'; require __DIR__.'/../includes/footer.php'; exit; }
 $staffOwnsVisit=current_user_role()==='staff'&&(
@@ -50,7 +51,7 @@ $originalOtherPhone=normalize_phone_number((string)($visit['other_phone']??''));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'save') === 'delete') {
     if(!verify_csrf_token((string)($_POST['csrf_token']??''))) $error='Your session expired. Please try again.';
-    else { try { db()->beginTransaction();$visitIdsStatement=db()->prepare('SELECT id FROM destination_visits WHERE id=? OR parent_visit_id=?');$visitIdsStatement->execute([$id,$id]);$visitIds=array_map('intval',$visitIdsStatement->fetchAll(PDO::FETCH_COLUMN));if($visitIds){$marks=implode(',',array_fill(0,count($visitIds),'?'));db()->prepare("DELETE FROM customer_pos_sale_vins WHERE customer_source='visit' AND record_id IN ($marks)")->execute($visitIds);}db()->prepare('DELETE FROM destination_visits WHERE parent_visit_id=?')->execute([$id]);db()->prepare('DELETE FROM destination_visits WHERE id=?')->execute([$id]);db()->commit();header('Location: '.($returnTo!==''?$returnTo:app_url('vendor-reports.php?report=customers&mode=lookup&deleted=1')));exit;}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error='The customer visit could not be deleted.';} }
+    else { try { db()->beginTransaction();$reason=requested_deletion_reason();soft_delete_record('legacy_visit',$id,$reason);db()->prepare('UPDATE destination_visits SET deleted_at=NOW(),deleted_by_user_id=?,deletion_reason=? WHERE parent_visit_id=? AND deleted_at IS NULL')->execute([current_user_id(),$reason,$id]);db()->commit();header('Location: '.($returnTo!==''?$returnTo:app_url('vendor-reports.php?report=customers&mode=lookup&deleted=1')));exit;}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The customer visit could not be deleted.';} }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['form_action']??'save') !== 'delete') {
@@ -121,7 +122,7 @@ require __DIR__.'/../includes/header.php';
         <div class="form-field"><label for="shop_video">Shop Vid</label><input id="shop_video" name="shop_video" type="file" accept="video/mp4,video/webm,video/quicktime"></div>
         <div class="form-field form-field--wide"><label for="note">Note</label><textarea id="note" name="note" rows="4"><?=e((string)($visit['note']??''))?></textarea></div>
     </div>
-    <div class="form-actions"><a class="secondary-button" href="<?=e($internalBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Cancel</span></a><button class="danger-button" type="submit" name="form_action" value="delete" formnovalidate data-confirm-title="Delete customer visit?" data-confirm-message="This permanently deletes this registration and all of its follow-ups."><i class="fa-solid fa-trash"></i><span>Delete</span></button><button class="login-button" type="submit" name="form_action" value="save"><span>Update visit</span><i class="fa-solid fa-floppy-disk"></i></button></div>
+    <div class="form-actions"><a class="secondary-button" href="<?=e($internalBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Cancel</span></a><button class="danger-button" type="submit" name="form_action" value="delete" formnovalidate data-confirm-title="Delete customer visit?" data-confirm-message="This hides the registration and its follow-ups and keeps them in the Recycle Bin."><i class="fa-solid fa-trash"></i><span>Delete</span></button><button class="login-button" type="submit" name="form_action" value="save"><span>Update visit</span><i class="fa-solid fa-floppy-disk"></i></button></div>
     </form>
 </section>
 <?php require __DIR__.'/../includes/footer.php'; ?>

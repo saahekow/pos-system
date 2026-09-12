@@ -78,7 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
             showConfirmDialog({
                 title: form.dataset.confirmTitle || 'Confirm action',
                 message: form.dataset.confirmMessage || 'Are you sure you want to continue?',
-                onConfirm: () => {
+                requireReason: /delete/i.test(`${form.dataset.confirmTitle || ''} ${form.dataset.confirmMessage || ''}`),
+                onConfirm: (reason) => {
+                    if (reason) setDeletionReason(form, reason);
                     form.dataset.confirmed = 'true';
                     form.submit();
                 },
@@ -93,7 +95,9 @@ document.addEventListener('DOMContentLoaded', () => {
             showConfirmDialog({
                 title: button.dataset.confirmTitle || 'Confirm action',
                 message: button.dataset.confirmMessage || 'Are you sure you want to continue?',
-                onConfirm: () => {
+                requireReason: /delete/i.test(`${button.dataset.confirmTitle || ''} ${button.dataset.confirmMessage || ''}`),
+                onConfirm: (reason) => {
+                    if (reason && button.form) setDeletionReason(button.form, reason);
                     button.dataset.confirmed = 'true';
                     button.form?.requestSubmit(button);
                 },
@@ -1985,7 +1989,9 @@ function setupReportFilters() {
             }
         });
         dateInputs.forEach((input) => {
-            input.value = query.get(input.name) || '';
+            if (query.has(input.name)) {
+                input.value = query.get(input.name) || '';
+            }
         });
 
         const setPanelOpen = (isOpen) => {
@@ -2847,7 +2853,18 @@ function liveFilterItemMatches(item, values) {
     });
 }
 
-function showConfirmDialog({ title, message, onConfirm, confirmLabel = 'Delete' }) {
+function setDeletionReason(form, reason) {
+    let input = form.querySelector('input[name="deletion_reason"]');
+    if (!input) {
+        input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'deletion_reason';
+        form.appendChild(input);
+    }
+    input.value = reason;
+}
+
+function showConfirmDialog({ title, message, onConfirm, confirmLabel = 'Delete', requireReason = false, reasonLabel = 'Reason for deletion', reasonPlaceholder = 'Explain why this record is being deleted', confirmButtonClass = 'danger-button', iconClass = 'fa-triangle-exclamation' }) {
     const existingDialog = document.querySelector('.confirm-backdrop');
 
     if (existingDialog) {
@@ -2859,15 +2876,16 @@ function showConfirmDialog({ title, message, onConfirm, confirmLabel = 'Delete' 
     backdrop.innerHTML = `
         <section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
             <div class="confirm-dialog__icon" aria-hidden="true">
-                <i class="fa-solid fa-triangle-exclamation"></i>
+                <i class="fa-solid ${iconClass}"></i>
             </div>
             <div class="confirm-dialog__body">
                 <h2 id="confirm-title"></h2>
                 <p></p>
+                ${requireReason ? '<label class="confirm-dialog__reason"><span></span><textarea rows="3" maxlength="1000" data-confirm-reason required></textarea><small data-confirm-reason-error></small></label>' : ''}
             </div>
             <div class="confirm-dialog__actions">
                 <button class="secondary-button" type="button" data-confirm-cancel>Cancel</button>
-                <button class="danger-button" type="button" data-confirm-delete>Delete</button>
+                <button class="${confirmButtonClass}" type="button" data-confirm-delete>Delete</button>
             </div>
         </section>
     `;
@@ -2875,6 +2893,8 @@ function showConfirmDialog({ title, message, onConfirm, confirmLabel = 'Delete' 
     backdrop.querySelector('h2').textContent = title;
     backdrop.querySelector('p').textContent = message;
     backdrop.querySelector('[data-confirm-delete]').textContent = confirmLabel;
+    const reasonField=backdrop.querySelector('[data-confirm-reason]');
+    if(reasonField){backdrop.querySelector('.confirm-dialog__reason span').textContent=reasonLabel;reasonField.placeholder=reasonPlaceholder;}
 
     const close = () => backdrop.remove();
 
@@ -2886,8 +2906,15 @@ function showConfirmDialog({ title, message, onConfirm, confirmLabel = 'Delete' 
 
     backdrop.querySelector('[data-confirm-cancel]').addEventListener('click', close);
     backdrop.querySelector('[data-confirm-delete]').addEventListener('click', () => {
+        const reasonField = backdrop.querySelector('[data-confirm-reason]');
+        const reason = reasonField ? reasonField.value.trim() : '';
+        if (reasonField && reason.length < 5) {
+            backdrop.querySelector('[data-confirm-reason-error]').textContent = 'Enter at least 5 characters.';
+            reasonField.focus();
+            return;
+        }
         close();
-        onConfirm();
+        onConfirm(reason);
     });
 
     document.addEventListener('keydown', function escapeHandler(event) {
@@ -2898,7 +2925,7 @@ function showConfirmDialog({ title, message, onConfirm, confirmLabel = 'Delete' 
     });
 
     document.body.appendChild(backdrop);
-    backdrop.querySelector('[data-confirm-cancel]').focus();
+    (backdrop.querySelector('[data-confirm-reason]') || backdrop.querySelector('[data-confirm-cancel]')).focus();
 }
 
 function showNoticeDialog({ title, message, kind = '' }) {
@@ -2960,51 +2987,27 @@ document.querySelectorAll('[data-place-choice-modal]').forEach((modal) => {
     });
 });
 
-const smartBackStorageKey = (url) => `spw:back:${url.pathname}${url.search}`;
-const isTransientBackTarget = (url) => (
-    /\/(?:[^/]*-edit|registration-edit|visit-edit|trip-edit|vendor-customer-edit|place-details|normalized-visit-details|legacy-customer-location)\.php$/i.test(url.pathname)
-    || url.searchParams.has('edit')
-    || (/\/vendor-setup\.php$/i.test(url.pathname) && url.searchParams.has('view'))
-);
-
 document.addEventListener('click', (event) => {
     const anchor = event.target.closest?.('a[href]');
-    if (!anchor || anchor.dataset.smartBackBound === 'true' || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+    if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download') || anchor.hasAttribute('data-no-return')) return;
+    const isBackLink = anchor.matches('[data-history-back], [data-internal-page-back], .flow-back-link')
+        || !!anchor.querySelector('.fa-arrow-left')
+        || /^back\b/i.test((anchor.textContent || '').trim());
+    if (isBackLink) return;
     try {
         const destination = new URL(anchor.href, window.location.href);
         const source = new URL(window.location.href);
-        if (destination.origin !== window.location.origin || destination.href === source.href || isTransientBackTarget(destination) || isTransientBackTarget(source)) return;
-        sessionStorage.setItem(smartBackStorageKey(destination), window.location.href);
+        if (!/^https?:$/.test(destination.protocol)
+            || destination.origin !== source.origin
+            || destination.pathname === source.pathname
+            || destination.searchParams.has('return_to')
+            || /\/(?:login|logout)\.php$/i.test(destination.pathname)) return;
+        destination.searchParams.set('return_to', source.pathname + source.search);
+        anchor.href = destination.href;
     } catch (_) {
-        // Existing link behaviour remains the fallback when storage is unavailable.
+        // Keep the original link when URL parsing is unavailable.
     }
 }, true);
-
-const smartBackLinks = [...document.querySelectorAll(
-    '[data-history-back], a.secondary-button, a.flow-back-link, .registration-records-back a, .sales-page-back a'
-)].filter((link) => (
-    link.matches('[data-history-back]')
-    || !!link.querySelector('.fa-arrow-left')
-    || /^back\b/i.test((link.textContent || '').trim())
-));
-
-smartBackLinks.forEach((link) => {
-    link.dataset.smartBackBound = 'true';
-    link.addEventListener('click', (event) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        const current = new URL(window.location.href);
-        try {
-            const storedTarget = sessionStorage.getItem(smartBackStorageKey(current));
-            const storedUrl = storedTarget ? new URL(storedTarget) : null;
-            if (storedUrl && storedUrl.origin === current.origin && storedUrl.href !== current.href && !isTransientBackTarget(storedUrl)) {
-                event.preventDefault();
-                window.location.href = storedUrl.href;
-            }
-        } catch (_) {
-            // Use the link's original href when browser storage is unavailable.
-        }
-    });
-});
 
 document.querySelectorAll('[data-note-view]').forEach((button) => {
     button.addEventListener('click', () => {

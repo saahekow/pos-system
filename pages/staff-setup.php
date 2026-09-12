@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 
 require_menu_item_access('setup_staff');
+ensure_recycle_bin_schema();
 sync_staff_login_phones();
 
 $pageTitle = 'Staff Setup';
@@ -79,15 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $userStatement->execute([$postedStaffId]);
             $linkedUserId = (int) ($userStatement->fetchColumn() ?: 0);
 
-            $statement = db()->prepare('DELETE FROM staff WHERE id = ?');
-            $statement->execute([$postedStaffId]);
-
-            if ($linkedUserId > 0) {
-                $userDelete = db()->prepare('DELETE FROM users WHERE id = ? AND role = ?');
-                $userDelete->execute([$linkedUserId, 'staff']);
-            }
-
-            $message = 'Staff record deleted successfully.';
+            try{db()->beginTransaction();soft_delete_record('staff',$postedStaffId,requested_deletion_reason());db()->prepare('UPDATE staff SET is_active=0 WHERE id=?')->execute([$postedStaffId]);if($linkedUserId>0)db()->prepare("UPDATE users SET is_active=0 WHERE id=? AND role='staff'")->execute([$linkedUserId]);db()->commit();$message='Staff moved to the Recycle Bin and login disabled.';}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The staff record could not be deleted.';}
             $formData = [
                 'staff_id' => '',
                 'staff_ref_no' => '',
@@ -328,6 +321,7 @@ $staffRecords = db()
          FROM staff
          LEFT JOIN users ON users.id = staff.added_by_user_id
          LEFT JOIN staff_roles ON staff_roles.id = staff.role_id
+         WHERE staff.deleted_at IS NULL
          ORDER BY staff.created_at DESC, staff.id DESC'
     )
     ->fetchAll();

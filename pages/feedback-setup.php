@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 
 require_menu_item_access('setup_feedback');
+ensure_recycle_bin_schema();
 ensure_destination_visit_schema();
 
 $pageTitle = 'Feedback Setup';
@@ -44,9 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($feedbackId <= 0) {
             $error = 'Select a valid feedback option to delete.';
         } else {
-            $statement = db()->prepare('DELETE FROM visit_feedback_options WHERE id = ?');
-            $statement->execute([$feedbackId]);
-            $message = 'Feedback option deleted successfully.';
+            try{db()->beginTransaction();soft_delete_record('feedback_option',$feedbackId,requested_deletion_reason());db()->prepare('UPDATE visit_feedback_options SET is_active=0 WHERE id=?')->execute([$feedbackId]);db()->commit();$message='Feedback option moved to the Recycle Bin.';}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The feedback option could not be deleted.';}
             $feedbackLabel = '';
             $status = '1';
             $editFeedbackId = 0;
@@ -81,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $feedbackOptions = db()
-    ->query('SELECT id, feedback_label, is_active, created_at FROM visit_feedback_options ORDER BY feedback_label')
+    ->query('SELECT id, feedback_label, is_active, created_at FROM visit_feedback_options WHERE deleted_at IS NULL ORDER BY feedback_label')
     ->fetchAll();
 
 require_once __DIR__ . '/../includes/header.php';

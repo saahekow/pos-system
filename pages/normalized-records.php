@@ -42,14 +42,14 @@ $placeVisits = db()->query(
 
 $activities = db()->query(
     "SELECT a.*,ps.session_ref,p.bus_loc_ref,p.business_name,c.customer_ref,c.customer_name,
-            st.trip_code,cs.sale_record_ref,cs.sales_ref,cs.sale_confirmed,
+            st.trip_code,CONCAT('PROMO-',cs.id) AS sale_record_ref,NULL AS sales_ref,0 AS sale_confirmed,
             (SELECT n.feedback FROM visit_notes n WHERE n.visit_id=a.id ORDER BY n.id DESC LIMIT 1) AS feedback
      FROM visits a
      INNER JOIN business_locations p ON p.id=a.bus_loc_id
      INNER JOIN customers c ON c.id=a.customer_id
      LEFT JOIN place_visit_sessions ps ON ps.id=a.place_session_id
      LEFT JOIN sales_trips st ON st.id=a.sales_trip_id
-     LEFT JOIN customer_sales cs ON cs.visit_id=a.id
+     LEFT JOIN customer_promo_plugs cs ON cs.visit_id=a.id
      ORDER BY a.id DESC"
 )->fetchAll();
 

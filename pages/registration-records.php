@@ -15,6 +15,10 @@ $tab = in_array($tab, ['all','drafts', 'completed', 'places'], true) ? $tab : 'a
 $search = trim((string)($_GET['q'] ?? ''));
 $dateFrom = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date_from'] ?? '')) ? (string)$_GET['date_from'] : '';
 $dateTo = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date_to'] ?? '')) ? (string)$_GET['date_to'] : '';
+$standaloneCustomerReport=$customersOnly&&!$customersPage;
+$dateFilterWasSubmitted=array_key_exists('date_from',$_GET)||array_key_exists('date_to',$_GET);
+if($standaloneCustomerReport&&!$dateFilterWasSubmitted&&$search===''){$dateFrom=date('Y-m-d');$dateTo=date('Y-m-d');}
+$suppressUnfilteredCustomers=$standaloneCustomerReport&&$search===''&&$dateFrom===''&&$dateTo==='';
 $requestedReturnTo=trim((string)($_GET['return_to']??''));$allowedReturnBases=[app_url('admin-customers.php'),app_url('vendor-customers.php')];$returnTo='';foreach($allowedReturnBases as $allowedReturnBase){if($requestedReturnTo===$allowedReturnBase||str_starts_with($requestedReturnTo,$allowedReturnBase.'?')){$returnTo=$requestedReturnTo;break;}}$defaultBackUrl=app_url('marketing-trip.php');$backUrl=$returnTo!==''?$returnTo:$defaultBackUrl;$backLabel=$returnTo!==''?'Create Customers':'Marketing Trip';
 $userId = (int)current_user_id();
 $staffId = current_staff_id() ?: 0;
@@ -92,6 +96,7 @@ $completedSql =
        AND COALESCE(LOWER(NULLIF(jt.job_type_name,'')),LOWER(NULLIF(c.job_type,'')),'')<>'apprentice'
        AND ".($fullListingAccess ? '1=1' : "(v.vendor_id=? OR v.recorded_by_user_id=? OR $tripAccess)");
 $completedParams = $fullListingAccess ? [] : [$vendorId, $userId, ...$accessParams];
+if($suppressUnfilteredCustomers)$completedSql.=' AND 1=0';
 if ($search !== '') {
     $completedSql .= ' AND (v.visit_ref LIKE ? OR c.customer_ref LIKE ? OR c.customer_name LIKE ? OR c.phone LIKE ? OR c.other_phone LIKE ? OR p.business_name LIKE ? OR st.trip_code LIKE ?)';
     array_push($completedParams, $like, $like, $like, $like, $like, $like, $like);
@@ -119,13 +124,14 @@ if ($fullListingAccess || (current_user_role()==='vendor' && $vendorId>0)) {
           AND NOT EXISTS (SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(dv.phone,''),'!'),COALESCE(NULLIF(dv.other_phone,''),'?')))
           AND ".($fullListingAccess?'1=1':'(dv.vendor_id=? OR st.vendor_id=? OR EXISTS (SELECT 1 FROM sales_trip_vendor_assignments vta WHERE vta.sales_trip_id=dv.sales_trip_id AND vta.vendor_id=?))');
     $vendorVisitParams=$fullListingAccess?[]:[$vendorId,$vendorId,$vendorId];
+    if($suppressUnfilteredCustomers)$vendorVisitSql.=' AND 1=0';
     if($search!==''){$vendorVisitSql.=' AND (dv.company_name LIKE ? OR dv.owner_name LIKE ? OR dv.phone LIKE ? OR dv.other_phone LIKE ? OR dv.area LIKE ? OR l.town_name LIKE ? OR st.trip_code LIKE ?)';array_push($vendorVisitParams,$like,$like,$like,$like,$like,$like,$like);}
     if($dateFrom!==''){$vendorVisitSql.=' AND DATE(dv.created_at)>=?';$vendorVisitParams[]=$dateFrom;}
     if($dateTo!==''){$vendorVisitSql.=' AND DATE(dv.created_at)<=?';$vendorVisitParams[]=$dateTo;}
     $vendorVisitStatement=db()->prepare($vendorVisitSql);$vendorVisitStatement->execute($vendorVisitParams);
     foreach($vendorVisitStatement->fetchAll() as $row){$name=trim((string)($row['company_name']?:$row['owner_name']))?:'Customer';$completed[]=['id'=>(int)$row['id'],'source_id'=>(int)$row['id'],'record_source'=>'destination_visit','can_edit'=>1,'visit_ref'=>'VS-'.(int)$row['id'],'visit_date'=>substr((string)$row['created_at'],0,10),'created_at'=>(string)$row['created_at'],'sales_trip_id'=>(int)($row['sales_trip_id']??0),'customer_id'=>0,'customer_ref'=>'','customer_name'=>$name,'phone'=>(string)($row['phone']??''),'other_phone'=>(string)($row['other_phone']??''),'bus_loc_id'=>0,'bus_loc_ref'=>'','business_name'=>trim((string)($row['area']??'').' / '.(string)($row['town_name']??''),' /'),'is_legacy_placeholder'=>0,'trip_code'=>(string)$row['trip_code'],'created_by'=>(string)($row['created_by']??'')];}
 
-    $legacySql="SELECT vc.*,l.town_name,u.full_name AS created_by FROM vendor_customers vc LEFT JOIN locations l ON l.id=vc.location_id LEFT JOIN users u ON u.id=vc.created_by_user_id WHERE ".($fullListingAccess?'1=1':'vc.vendor_id=?')." AND vc.normalized_customer_id IS NULL AND NOT EXISTS(SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(vc.phone,''),'!'),COALESCE(NULLIF(vc.other_phone,''),'?')))";$legacyParams=$fullListingAccess?[]:[$vendorId];
+    $legacySql="SELECT vc.*,l.town_name,u.full_name AS created_by FROM vendor_customers vc LEFT JOIN locations l ON l.id=vc.location_id LEFT JOIN users u ON u.id=vc.created_by_user_id WHERE ".($fullListingAccess?'1=1':'vc.vendor_id=?')." AND vc.normalized_customer_id IS NULL AND NOT EXISTS(SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(vc.phone,''),'!'),COALESCE(NULLIF(vc.other_phone,''),'?')))";$legacyParams=$fullListingAccess?[]:[$vendorId];if($suppressUnfilteredCustomers)$legacySql.=' AND 1=0';
     if($search!==''){$legacySql.=' AND (vc.customer_name LIKE ? OR vc.contact_name LIKE ? OR vc.phone LIKE ? OR vc.other_phone LIKE ? OR vc.area LIKE ? OR l.town_name LIKE ?)';array_push($legacyParams,$like,$like,$like,$like,$like,$like);}
     if($dateFrom!==''){$legacySql.=' AND DATE(vc.created_at)>=?';$legacyParams[]=$dateFrom;}
     if($dateTo!==''){$legacySql.=' AND DATE(vc.created_at)<=?';$legacyParams[]=$dateTo;}

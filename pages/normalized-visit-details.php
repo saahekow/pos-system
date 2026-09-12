@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 ensure_customer_promo_plug_schema();
 ensure_places_management_schema();
+ensure_recycle_bin_schema();
 $requestedReturnTo = trim((string)($_GET['return_to'] ?? $_POST['return_to'] ?? ''));
 $requestedReturnPath = (string)(parse_url($requestedReturnTo, PHP_URL_PATH) ?: '');
 $marketingReportPaths = array_map(
@@ -32,7 +33,7 @@ $statement = db()->prepare(
             c.vehicle_registration_no,c.vin_no,c.supervisor_name,c.supervisor_phone,
             p.bus_loc_ref,p.business_name,p.area,p.google_location,p.shop_picture,p.shop_picture_2,p.shop_video,p.is_legacy_placeholder,
             l.town_name,l.region_name,l.mmda_name AS district_name,d.destination_name,d.destination_key,sht.shop_type_name,
-            ps.session_ref,cs.sale_record_ref,cs.sales_ref,cs.promo_plug,cs.sale_confirmed,cs.car_picture,
+            ps.session_ref,CONCAT('PROMO-',cs.id) AS sale_record_ref,NULL AS sales_ref,cs.promo_plug,0 AS sale_confirmed,NULL AS car_picture,
             staff.full_name AS staff_name,
             (SELECT n.feedback FROM visit_notes n WHERE n.visit_id=v.id ORDER BY n.id DESC LIMIT 1) feedback,
             (SELECT n.note FROM visit_notes n WHERE n.visit_id=v.id ORDER BY n.id DESC LIMIT 1) note
@@ -43,9 +44,9 @@ $statement = db()->prepare(
      LEFT JOIN destinations d ON d.id=p.destination_id
      LEFT JOIN shop_types sht ON sht.id=p.shop_type_id
      LEFT JOIN place_visit_sessions ps ON ps.id=v.place_session_id
-     LEFT JOIN customer_sales cs ON cs.visit_id=v.id
+     LEFT JOIN customer_promo_plugs cs ON cs.visit_id=v.id
      LEFT JOIN staff ON staff.id=v.staff_id
-     WHERE v.id=?"
+     WHERE v.id=? AND v.deleted_at IS NULL"
 );
 $statement->execute([$visitId]);
 $visit = $statement->fetch();
@@ -68,13 +69,13 @@ $followupOnly = (string)($_GET['view'] ?? '') === 'followup' && (string)($visit[
 $isTaxi = destination_is_taxi_rank($visit);
 
 $historyStatement = db()->prepare(
-    "SELECT v.*,st.trip_code,st.trip_date,cs.sales_ref,cs.promo_plug,cs.sale_confirmed,
+    "SELECT v.*,st.trip_code,st.trip_date,NULL AS sales_ref,cs.promo_plug,0 AS sale_confirmed,
             staff.full_name AS staff_name,
             (SELECT n.feedback FROM visit_notes n WHERE n.visit_id=v.id ORDER BY n.id DESC LIMIT 1) feedback,
             (SELECT n.note FROM visit_notes n WHERE n.visit_id=v.id ORDER BY n.id DESC LIMIT 1) note
      FROM visits v
      LEFT JOIN sales_trips st ON st.id=v.sales_trip_id
-     LEFT JOIN customer_sales cs ON cs.visit_id=v.id
+     LEFT JOIN customer_promo_plugs cs ON cs.visit_id=v.id
      LEFT JOIN staff ON staff.id=v.staff_id
      WHERE v.customer_id=? ORDER BY COALESCE(v.follow_up_at,v.created_at),v.id"
 );
@@ -125,15 +126,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($formAction === 'delete_visit') {
         try {
             db()->beginTransaction();
-            db()->prepare('DELETE FROM visit_notes WHERE visit_id=?')->execute([$visitId]);
-            db()->prepare('DELETE FROM customer_promo_plugs WHERE visit_id=?')->execute([$visitId]);
-            db()->prepare('DELETE FROM visits WHERE id=?')->execute([$visitId]);
+            soft_delete_record('visit',$visitId,requested_deletion_reason());
             db()->commit();
             header('Location: '.$backUrl.(str_contains($backUrl, '?') ? '&' : '?').'deleted=1');
             exit;
         } catch (Throwable $exception) {
             if (db()->inTransaction()) db()->rollBack();
-            $actionError = 'The customer visit could not be deleted.';
+            $actionError = $exception instanceof DomainException?$exception->getMessage():'The customer visit could not be deleted.';
         }
     } elseif ($formAction === 'update_visit' && !$canEdit) {
         $actionError = 'You are not allowed to edit this customer visit.';
@@ -252,7 +251,7 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="form-actions"><a class="secondary-button" href="<?=e($detailsUrl)?>">Cancel</a><button class="login-button" type="submit"><i class="fa-solid fa-floppy-disk"></i><span>Save Changes</span></button></div>
     </form>
     <?php endif;?>
-    <?php if(!$editMode):?><div class="form-actions customer-detail-action-bar"><a class="secondary-button" href="<?=e($backUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a><?php if($canEdit):?><?php if((int)($visit['bus_loc_id']??0)>0):?><a class="secondary-button" href="<?=e(app_url('place-details.php?id='.(int)$visit['bus_loc_id'].'&edit=1&customer_id='.(int)$visit['customer_id'].'&return_to='.rawurlencode($detailsUrl)))?>"><i class="fa-solid <?=(int)($visit['is_legacy_placeholder']??0)===1?'fa-location-dot':'fa-arrow-right-arrow-left'?>"></i><span><?=(int)($visit['is_legacy_placeholder']??0)===1?'Assign Location':'Move / Merge'?></span></a><?php endif;?><a class="action-button" href="<?=e($detailsUrl.'&edit=1')?>"><i class="fa-solid fa-pen"></i><span>Edit</span></a><form method="post" data-confirm-title="Delete customer visit?" data-confirm-message="This permanently deletes this visit, its sales information, and its notes."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_visit"><button class="danger-button" type="submit"><i class="fa-solid fa-trash"></i><span>Delete</span></button></form><?php endif;?></div><?php endif;?>
+    <?php if(!$editMode):?><div class="form-actions customer-detail-action-bar"><a class="secondary-button" href="<?=e($backUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a><?php if($canEdit):?><?php if((int)($visit['bus_loc_id']??0)>0):?><a class="secondary-button" href="<?=e(app_url('place-details.php?id='.(int)$visit['bus_loc_id'].'&edit=1&customer_id='.(int)$visit['customer_id'].'&return_to='.rawurlencode($detailsUrl)))?>"><i class="fa-solid <?=(int)($visit['is_legacy_placeholder']??0)===1?'fa-location-dot':'fa-arrow-right-arrow-left'?>"></i><span><?=(int)($visit['is_legacy_placeholder']??0)===1?'Assign Location':'Move / Merge'?></span></a><?php endif;?><a class="action-button" href="<?=e($detailsUrl.'&edit=1')?>"><i class="fa-solid fa-pen"></i><span>Edit</span></a><form method="post" data-confirm-title="Delete customer visit?" data-confirm-message="This hides the visit from reports and keeps all related information in the Recycle Bin."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_visit"><button class="danger-button" type="submit"><i class="fa-solid fa-trash"></i><span>Delete</span></button></form><?php endif;?></div><?php endif;?>
     <div class="detail-grid detail-grid--plain retailer-profile-grid"><dl>
         <?php $detailFields=[
             'customer_ref'=>'Customer ID','visit_ref'=>'Visit ID','session_ref'=>'Location Visit ID',

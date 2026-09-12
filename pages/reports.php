@@ -8,13 +8,13 @@ $requestedReportModule = $requestedReportSection === 'followup' && current_user_
 require_module_access($requestedReportModule);
 ensure_destination_visit_schema();
 ensure_places_management_schema();
+ensure_recycle_bin_schema();
 
 $pageTitle = 'Reports';
 $breadcrumbs = [['label' => 'Home', 'url' => app_url('index.php')], ['label' => 'Reports']];
 $destinationId = max(0, (int) ($_GET['destination_id'] ?? 0));
 $reportSection = (string) ($_GET['report'] ?? '');
 $reportSection = in_array($reportSection, ['visits', 'followup', 'visit-summary'], true) ? $reportSection : '';
-if($reportSection==='visit-summary'&&!can_access_menu_item('marketing_report_trip')){header('Location: '.app_url('marketing.php?view=reports'));exit;}
 $allDestinations = $reportSection === 'visits' && (string)($_GET['scope'] ?? '') === 'all';
 $mode = (string) ($_GET['mode'] ?? '');
 $mode = in_array($mode, ['type', 'lookup'], true) ? $mode : '';
@@ -49,6 +49,7 @@ if ($reportSection === 'visit-summary') {
          FROM sales_trips st
          LEFT JOIN vehicles vehicle ON vehicle.id=st.vehicle_id
          LEFT JOIN staff ON staff.id=st.staff_id
+         WHERE st.deleted_at IS NULL
          ORDER BY st.trip_date DESC,st.id DESC"
     )->fetchAll();
     if ($visitSummaries) {
@@ -100,7 +101,7 @@ if (($selectedDestination || $allDestinations) && $mode !== '') {
     }
     $sql = "SELECT v.id,v.visit_ref,v.customer_id,p.destination_id,p.business_name AS company_name,c.customer_name AS owner_name,
                    c.phone,c.other_phone,p.area,p.location_id,v.visit_type,v.follow_up_method,v.follow_up_at,
-                   cs.sales_ref,cs.sale_confirmed,
+                   NULL AS sales_ref,0 AS sale_confirmed,
                    (SELECT COUNT(*) FROM customer_pos_sale_vins csv WHERE csv.customer_source='visit' AND csv.record_id=v.id AND csv.amount>0) AS purchase_count,
                    v.created_at,l.region_name,l.town_name,d.destination_name,st.trip_code,
                    'normalized' AS report_source
@@ -108,10 +109,10 @@ if (($selectedDestination || $allDestinations) && $mode !== '') {
             INNER JOIN business_locations p ON p.id=v.bus_loc_id
             INNER JOIN customers c ON c.id=v.customer_id
             INNER JOIN destinations d ON d.id=p.destination_id
-            LEFT JOIN customer_sales cs ON cs.visit_id=v.id
+            LEFT JOIN customer_promo_plugs cs ON cs.visit_id=v.id
             LEFT JOIN locations l ON l.id=p.location_id
             LEFT JOIN sales_trips st ON st.id=v.sales_trip_id
-            WHERE v.record_status='completed'";
+            WHERE v.record_status='completed' AND v.deleted_at IS NULL";
     $params = [];
     if ($reportSection === 'followup') $sql .= " AND v.visit_type='follow_up'"; else $sql .= " AND v.visit_type='registration'";
     if (!$allDestinations) {$sql .= ' AND p.destination_id=?'; $params[]=$destinationId;}
@@ -126,7 +127,7 @@ if (($selectedDestination || $allDestinations) && $mode !== '') {
     $statement = db()->prepare($sql);
     $statement->execute($params);
     $rows = $statement->fetchAll();
-    $legacySql="SELECT dv.id,0 customer_id,dv.destination_id,dv.company_name,dv.owner_name,dv.phone,dv.other_phone,dv.area,dv.location_id,dv.visit_type,dv.follow_up_method,dv.follow_up_at,dv.sales_ref,0 sale_confirmed,dv.created_at,l.region_name,l.town_name,d.destination_name,st.trip_code,CONCAT('VS-',dv.id) visit_ref,'legacy' report_source FROM destination_visits dv INNER JOIN destinations d ON d.id=dv.destination_id LEFT JOIN locations l ON l.id=dv.location_id LEFT JOIN sales_trips st ON st.id=dv.sales_trip_id WHERE dv.record_status='completed' AND dv.normalized_customer_id IS NULL AND NOT EXISTS(SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(dv.phone,''),'!'),COALESCE(NULLIF(dv.other_phone,''),'?')))";
+    $legacySql="SELECT dv.id,0 customer_id,dv.destination_id,dv.company_name,dv.owner_name,dv.phone,dv.other_phone,dv.area,dv.location_id,dv.visit_type,dv.follow_up_method,dv.follow_up_at,dv.sales_ref,0 sale_confirmed,dv.created_at,l.region_name,l.town_name,d.destination_name,st.trip_code,CONCAT('VS-',dv.id) visit_ref,'legacy' report_source FROM destination_visits dv INNER JOIN destinations d ON d.id=dv.destination_id LEFT JOIN locations l ON l.id=dv.location_id LEFT JOIN sales_trips st ON st.id=dv.sales_trip_id WHERE dv.record_status='completed' AND dv.deleted_at IS NULL AND dv.normalized_customer_id IS NULL AND NOT EXISTS(SELECT 1 FROM customers nc WHERE COALESCE(NULLIF(nc.phone,''),NULLIF(nc.other_phone,''),'#') IN (COALESCE(NULLIF(dv.phone,''),'!'),COALESCE(NULLIF(dv.other_phone,''),'?')))";
     $legacyParams=[];
     if($reportSection==='followup')$legacySql.=" AND dv.visit_type='follow_up'";else $legacySql.=" AND dv.visit_type='registration'";
     if(!$allDestinations){$legacySql.=' AND dv.destination_id=?';$legacyParams[]=$destinationId;}
@@ -154,24 +155,48 @@ if ($reportSection !== '') {
 }
 require_once __DIR__ . '/../includes/header.php';
 ?>
+<?php $recycleReturnUrl=safe_app_return_url((string)($_SERVER['REQUEST_URI']??''),app_url('reports.php')); ?>
+<div class="report-bin-shortcut"><a href="<?=e(app_url('recycle-bin.php?module=marketing&section='.($reportSection==='visit-summary'?'visit-summary':($reportSection==='visits'||$reportSection==='followup'?'visits':'staff')).'&return_to='.rawurlencode($recycleReturnUrl)))?>" title="Open Recycle Bin"><i class="fa-solid fa-trash-can"></i><span>Recycle Bin</span></a></div>
 
 <?php if ($reportSection === ''): ?>
 <section class="management-panel reports-menu-panel">
     <div class="management-heading"><div><span class="section-kicker">Admin Reports</span><h1>Reports</h1><p>Review staff, field, fleet, registration, and operational records.</p></div><div class="management-icon"><i class="fa-solid fa-chart-line"></i></div></div>
     <div class="report-destination-grid">
         <a class="report-destination-card" href="<?= e(app_url('staff-report.php?return_to='.rawurlencode($reportsHubUrl))) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-users"></i></span><strong>Staff</strong><span>View all staff records <i class="fa-solid fa-arrow-right"></i></span></a>
-        <a class="report-destination-card" href="<?= e(app_url('attendance-report.php?return_to='.rawurlencode($reportsHubUrl))) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-calendar-check"></i></span><strong>Attendance</strong><span>View staff attendance <i class="fa-solid fa-arrow-right"></i></span></a>
         <?php if(can_access_module('activity_log')): ?><a class="report-destination-card" href="<?= e(app_url('activity-log.php?return_to='.rawurlencode($reportsHubUrl))) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-clock-rotate-left"></i></span><strong>Activity Log</strong><span>Review trip and field history <i class="fa-solid fa-arrow-right"></i></span></a><?php endif; ?>
         <?php if(can_access_module('vehicle_log')): ?><a class="report-destination-card" href="<?= e(app_url('vehicles.php?return_to='.rawurlencode($reportsHubUrl))) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-car-side"></i></span><strong>Vehicle Records</strong><span>Review fuel and log books <i class="fa-solid fa-arrow-right"></i></span></a><?php endif; ?>
         <?php if(can_access_module('feedback')): ?><a class="report-destination-card" href="<?= e(app_url('feedback.php?return_to='.rawurlencode($reportsHubUrl))) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-comments"></i></span><strong>Feedback</strong><span>Review field feedback <i class="fa-solid fa-arrow-right"></i></span></a><?php endif; ?>
         <?php if(can_access_module('registration_records')): ?><a class="report-destination-card" href="<?= e(app_url('registration-records.php?return_to='.rawurlencode($reportsHubUrl))) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-address-card"></i></span><strong>Registration Records</strong><span>Review saved registrations <i class="fa-solid fa-arrow-right"></i></span></a><?php endif; ?>
         <a class="report-destination-card" href="<?= e(app_url('reports.php?report=visits&scope=all'.$reportsContext)) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-location-dot"></i></span><strong>Visits</strong><span>View all records <i class="fa-solid fa-arrow-right"></i></span></a>
         <a class="report-destination-card" href="<?= e(app_url('reports.php?report=followup'.$reportsContext)) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-clipboard-check"></i></span><strong>Follow-up Reports</strong><span>Open report <i class="fa-solid fa-arrow-right"></i></span></a>
-        <a class="report-destination-card" href="<?= e(app_url('reports.php?report=visit-summary'.$reportsContext)) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-list-check"></i></span><strong>Visit Summary</strong><span>View trip visit totals <i class="fa-solid fa-arrow-right"></i></span></a>
+        <a class="report-destination-card" href="<?= e(app_url('reports.php?report=visit-summary'.$reportsContext)) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-list-check"></i></span><strong>Trip Summary</strong><span>View trip totals at a glance <i class="fa-solid fa-arrow-right"></i></span></a>
+        <a class="report-destination-card" href="<?= e(app_url('recycle-bin.php?module=marketing&section=staff')) ?>"><span class="report-destination-card__icon"><i class="fa-solid fa-recycle"></i></span><strong>Recycle Bin</strong><span>Review deleted report records <i class="fa-solid fa-arrow-right"></i></span></a>
     </div>
 </section>
 
 <?php elseif ($reportSection === 'visit-summary'): ?>
+<section class="management-panel management-panel--table">
+    <div class="management-heading"><div><span class="section-kicker">Report Center</span><h1>Trip Summary</h1><p>A concise overview of every marketing trip and its customer totals.</p></div><div class="management-icon"><i class="fa-solid fa-list-check"></i></div></div>
+    <div class="report-subnav"><a class="secondary-button" href="<?=e($reportsHubUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Reports</span></a></div>
+    <?php if(!$visitSummaries):?><p class="empty-state">No marketing trip summaries are available.</p><?php else:?><div class="table-wrap"><table class="data-table data-table--compact trip-summary-table"><thead><tr><th>Date</th><th>Region</th><th>Town</th><th>Location</th><th>Trip Reference</th><th>Mileage</th><th>Customers</th><th>Apprentices</th><th>Status</th></tr></thead><tbody><?php foreach($visitSummaries as $summary):$tripPlaces=$summaryPlacesByTrip[(int)$summary['id']]??[];$regions=[];$townNames=[];$locationNames=[];$tripCustomers=[];$tripApprentices=[];foreach($tripPlaces as $place){if(trim((string)$place['region_name'])!=='')$regions[(string)$place['region_name']]=true;if(trim((string)$place['town_name'])!=='')$townNames[(string)$place['town_name']]=true;$locationName=trim((string)($place['area']?:$place['business_name']));if($locationName!=='')$locationNames[$locationName]=true;foreach($place['customers']??[] as $customer)$tripCustomers[(int)$customer['customer_id']]=true;foreach($place['apprentices']??[] as $apprentice)$tripApprentices[(int)$apprentice['customer_id']]=true;}$mileage=$summary['journey_distance_kilometers'];if($mileage===null&&$summary['journey_start_kilometers']!==null&&$summary['journey_end_kilometers']!==null)$mileage=max(0,(float)$summary['journey_end_kilometers']-(float)$summary['journey_start_kilometers']);?><tr><td><?=e(date('d-M-y',strtotime((string)$summary['trip_date'])))?></td><td><?=e(implode(', ',array_keys($regions))?:'—')?></td><td><?=e(implode(', ',array_keys($townNames))?:'—')?></td><td><?=e(implode(', ',array_keys($locationNames))?:'—')?></td><td><strong><?=e((string)$summary['trip_code'])?></strong></td><td><?=$mileage!==null?e(rtrim(rtrim(number_format((float)$mileage,2,'.',''),'0'),'.')):'—'?></td><td><?=number_format(count($tripCustomers))?></td><td><?=number_format(count($tripApprentices))?></td><td><span class="status-badge <?=$summary['status']==='completed'?'is-active':'is-warning'?>"><?=e(ucwords(str_replace('_',' ',(string)$summary['status'])))?></span></td></tr><?php endforeach;?></tbody></table></div><?php endif;?>
+</section>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+    document.querySelectorAll('.trip-summary-table tbody td:nth-child(4)').forEach(cell=>{
+        const full=cell.textContent.trim();
+        if(full.length<=58)return;
+        const preview=full.slice(0,55).trimEnd().replace(/[,;\s]+$/,'')+'…';
+        cell.classList.add('trip-summary-location');
+        cell.replaceChildren();
+        const text=document.createElement('span');text.textContent=preview;
+        const button=document.createElement('button');button.type='button';button.className='trip-summary-view-more';button.textContent='View more';
+        let expanded=false;button.addEventListener('click',()=>{expanded=!expanded;cell.classList.toggle('is-expanded',expanded);text.textContent=expanded?full:preview;button.textContent=expanded?'Show less':'View more';});
+        cell.append(text,button);
+    });
+});
+</script>
+
+<?php elseif ($reportSection === 'visit-summary-legacy'): ?>
 <section class="management-panel management-panel--table">
     <div class="management-heading"><div><span class="section-kicker">Report Center</span><h1>Visit Summary</h1><p>Visit totals recorded under each marketing trip.</p></div><div class="management-icon"><i class="fa-solid fa-list-check"></i></div></div>
     <div class="report-subnav"><a class="secondary-button" href="<?=e($reportsHubUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Reports</span></a></div>

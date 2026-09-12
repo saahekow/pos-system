@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 require_menu_item_access('setup_referrals');
 ensure_pos_referral_source_schema();
+ensure_recycle_bin_schema();
 
 $pageTitle = 'Referral Source Setup';
 $breadcrumbs = [
@@ -35,8 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token((string)($_POST['csrf_token'] ?? ''))) {
         $error = 'Your session expired. Please try again.';
     } elseif ($action === 'delete' && $postedId > 0) {
-        db()->prepare('DELETE FROM pos_referral_sources WHERE id=?')->execute([$postedId]);
-        $message = 'Referral source deleted successfully.';
+        try{db()->beginTransaction();soft_delete_record('referral_source',$postedId,requested_deletion_reason());db()->prepare('UPDATE pos_referral_sources SET is_active=0 WHERE id=?')->execute([$postedId]);db()->commit();$message='Referral source moved to the Recycle Bin.';}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The referral source could not be deleted.';}
         $sourceName = ''; $status = '1'; $editId = 0;
     } elseif ($sourceName === '') {
         $error = 'Referral source name is required.';
@@ -56,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$sources = db()->query('SELECT id,source_name,is_active,created_at FROM pos_referral_sources ORDER BY source_name')->fetchAll();
+$sources = db()->query('SELECT id,source_name,is_active,created_at FROM pos_referral_sources WHERE deleted_at IS NULL ORDER BY source_name')->fetchAll();
 require_once __DIR__ . '/../includes/header.php';
 ?>
 <section class="management-panel">

@@ -5,15 +5,31 @@ ensure_pos_referral_source_schema();
 ensure_job_type_schema();
 ensure_places_management_schema();
 ensure_pos_sales_schema();
+ensure_pos_credit_payments_schema();
 ensure_vendor_personnel_schema();
-$saleSource=(string)($_GET['source']??$_POST['sale_source']??'pos')==='sor'?'sor':'pos';
+ensure_pos_sale_edit_audit_schema();
+$editSaleId=max(0,(int)($_POST['edit_sale_id']??$_GET['edit']??0));
+$editSale=null;$editItems=[];
+if($editSaleId){
+    $editStatement=db()->prepare('SELECT * FROM pos_sales WHERE id=? AND status=\'completed\' LIMIT 1');
+    $editStatement->execute([$editSaleId]);$editSale=$editStatement->fetch();
+    if(!$editSale){http_response_code(404);exit('Sale receipt not found.');}
+    $editItemStatement=db()->prepare('SELECT si.*,(SELECT vin_number FROM pos_sale_vins WHERE sale_item_id=si.id ORDER BY id LIMIT 1) vin_number FROM pos_sale_items si WHERE si.sale_id=? ORDER BY si.id');
+    $editItemStatement->execute([$editSaleId]);$editItems=$editItemStatement->fetchAll();
+}
+$saleSource=(string)($editSale['sale_source']??$_GET['source']??$_POST['sale_source']??'pos')==='sor'?'sor':'pos';
 $isSorSale=$saleSource==='sor';
 $saleVendor=current_vendor_profile();
 if($saleVendor&&current_vendor_is_sor()!==$isSorSale){header('Location: '.app_url('pos-sales.php'.(current_vendor_is_sor()?'?source=sor':'')));exit;}
 $salePersonnel=current_vendor_personnel();
 if($salePersonnel&&(($isSorSale&&(int)$salePersonnel['can_sor']!==1)||(!$isSorSale&&(int)$salePersonnel['can_make_sales']!==1))){http_response_code(403);exit('This sales role has not been assigned to your account.');}
 $saleVendorId=(int)($saleVendor['id']??0);
-$activeDayClosure=$saleVendorId?vendor_day_is_closed($saleVendorId):null;
+if($editSale){
+    $ownsVendorSale=$saleVendorId>0&&(int)($editSale['vendor_id']??0)===$saleVendorId;
+    $canEditSale=is_admin_user()||current_user_role()==='staff'||$ownsVendorSale;
+    if(!$canEditSale){http_response_code(403);exit('You do not have permission to edit this receipt.');}
+}
+$activeDayClosure=$saleVendorId&&!$editSale?vendor_day_is_closed($saleVendorId):null;
 $referralSources = db()->query("SELECT source_name FROM pos_referral_sources WHERE is_active=1 ORDER BY source_name")->fetchAll();
 $vendors = db()->query("SELECT id,vendor_name,phone FROM vendors WHERE is_active=1 ORDER BY vendor_name")->fetchAll();
 $locations = active_locations();
@@ -21,7 +37,11 @@ $locationRegions = [];
 foreach($locations as $location){$regionKey=(string)($location['region_code']?:$location['region_name']);$locationRegions[$regionKey]=(string)$location['region_name'];}
 asort($locationRegions);
 $plugBrands = db()->query("SELECT DISTINCT brand_name FROM spark_plugs WHERE is_active=1 ORDER BY brand_name")->fetchAll();
+foreach($editItems as $editItem){$editBrand=(string)$editItem['brand_name'];if($editBrand!==''&&!array_filter($plugBrands,static fn(array $brand):bool=>strcasecmp((string)$brand['brand_name'],$editBrand)===0))$plugBrands[]=['brand_name'=>$editBrand];}
+usort($plugBrands,static fn(array $a,array $b):int=>strcasecmp((string)$a['brand_name'],(string)$b['brand_name']));
 $jobTypes = db()->query("SELECT id,job_type_name FROM job_types WHERE is_active=1 ORDER BY job_type_name")->fetchAll();
+$editPlugIds=array_values(array_unique(array_filter(array_map(static fn(array $item):int=>(int)$item['spark_plug_id'],$editItems))));
+$sparkPlugVisibility=$editPlugIds?'(sp.is_active=1 OR sp.id IN ('.implode(',',$editPlugIds).'))':'sp.is_active=1';
 $sparkPlugs = db()->query(
     "SELECT sp.id,sp.brand_name,sp.plug_number,
             (SELECT ph.id FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_price_id,
@@ -29,9 +49,9 @@ $sparkPlugs = db()->query(
             (SELECT ph.effective_at FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_effective_at,
             (SELECT ph.price FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1 OFFSET 1) previous_price,
             (SELECT ph.effective_at FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1 OFFSET 1) previous_effective_at
-            ,COALESCE((SELECT pc.commission_percentage FROM plug_commissions pc WHERE pc.spark_plug_id=sp.id AND pc.is_active=1 LIMIT 1),0) commission_percentage
+            ,COALESCE((SELECT pc.commission_percentage FROM plug_commissions pc WHERE pc.spark_plug_id=sp.id AND pc.is_active=1 AND (pc.vendor_id=".($saleVendorId?:'NULL')." OR pc.vendor_id IS NULL) AND pc.effective_from<=CURRENT_DATE AND (pc.effective_to IS NULL OR pc.effective_to>=CURRENT_DATE) ORDER BY (pc.vendor_id IS NOT NULL) DESC,pc.effective_from DESC,pc.id DESC LIMIT 1),0) commission_percentage
      FROM spark_plugs sp
-     WHERE sp.is_active=1 ORDER BY sp.brand_name,sp.plug_number"
+     WHERE $sparkPlugVisibility ORDER BY sp.brand_name,sp.plug_number"
 )->fetchAll();
 $customers = db()->query(
     "SELECT c.id,c.customer_ref,c.customer_name,c.phone,c.job_type_id,c.customer_status,p.business_name,p.bus_loc_ref,p.location_id,p.area,
@@ -39,22 +59,25 @@ $customers = db()->query(
      FROM customers c
      LEFT JOIN business_locations p ON p.id=c.bus_loc_id
      LEFT JOIN job_types jt ON jt.id=c.job_type_id
-     WHERE c.is_active=1 AND c.record_status='completed'
+     WHERE (c.is_active=1".($editSale&&($editSale['customer_id']??0)?' OR c.id='.(int)$editSale['customer_id']:'').") AND c.record_status='completed'
      ORDER BY c.customer_name,c.customer_ref,c.id"
 )->fetchAll();
 $message=(string)($_GET['saved']??'')!==''?'Sale '.trim((string)$_GET['saved']).' saved successfully.':'';
 $error='';
 if($_SERVER['REQUEST_METHOD']==='POST'){
     if(!verify_csrf_token((string)($_POST['csrf_token']??'')))$error='Your session expired. Please try again.';
-    elseif($saleVendorId&&vendor_day_is_closed($saleVendorId))$error='Sales are closed for this vendor today. New sales will be available on the next calendar day.';
+    elseif($editSaleId&&strlen(trim((string)($_POST['edit_reason']??'')))<5)$error='Write a clear reason for editing this receipt (at least 5 characters).';
+    elseif(!$editSale&&$saleVendorId&&vendor_day_is_closed($saleVendorId))$error='Sales are closed for this vendor today. New sales will be available on the next calendar day.';
     else{
         $saleDate=trim((string)($_POST['sale_date']??''));
         $customerMode=(string)($_POST['customer_mode']??'registered');
         $postedProducts=is_array($_POST['products']??null)?$_POST['products']:[];
         $referralName=trim((string)($_POST['referral_source']??''));
         $comment=trim((string)($_POST['comment']??''));
+        $paymentType=(string)($_POST['payment_type']??'cash');
+        if(!in_array($paymentType,['cash','credit'],true))$paymentType='cash';
         $salesType=(string)($_POST['sales_type']??'direct');$recipientVendorId=max(0,(int)($_POST['recipient_vendor_id']??0));$recipientVendorName=null;$deliveryCharge=max(0,round((float)($_POST['delivery_charge']??0),2));
-        if(!in_array($salesType,['direct','indirect'],true))$salesType='direct';
+        if($isSorSale||!in_array($salesType,['direct','indirect'],true))$salesType='direct';
         $commissionApplies=$isSorSale||$salesType==='indirect';
         if($salesType==='indirect'){$vendorCheck=db()->prepare('SELECT vendor_name FROM vendors WHERE id=? AND is_active=1');$vendorCheck->execute([$recipientVendorId]);$recipientVendorName=$vendorCheck->fetchColumn()?:null;if(!$recipientVendorName)$error='Select the vendor who referred the customer.';}else{$recipientVendorId=0;}
         $customerId=null;$customerName='';$customerPhone=null;$jobTypeId=null;$customerType=null;$locationId=null;$area=null;
@@ -64,7 +87,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             if($customerMode==='registered'){
                 $referralName='';
                 $customerId=max(0,(int)($_POST['customer_id']??0));
-                $customerStatement=db()->prepare("SELECT c.id,c.customer_name,c.phone,c.job_type_id,c.customer_status,COALESCE(NULLIF(jt.job_type_name,''),NULLIF(c.job_type,'')) customer_type,p.location_id,p.area FROM customers c LEFT JOIN job_types jt ON jt.id=c.job_type_id LEFT JOIN business_locations p ON p.id=c.bus_loc_id WHERE c.id=? AND c.is_active=1 LIMIT 1");
+                $customerStatement=db()->prepare("SELECT c.id,c.customer_name,c.phone,c.job_type_id,c.customer_status,COALESCE(NULLIF(jt.job_type_name,''),NULLIF(c.job_type,'')) customer_type,p.location_id,p.area FROM customers c LEFT JOIN job_types jt ON jt.id=c.job_type_id LEFT JOIN business_locations p ON p.id=c.bus_loc_id WHERE c.id=? AND (c.is_active=1".($editSale&&($editSale['customer_id']??0)?' OR c.id='.(int)$editSale['customer_id']:'').") LIMIT 1");
                 $customerStatement->execute([$customerId]);$selectedCustomer=$customerStatement->fetch();
                 if(!$selectedCustomer)$error='Select a registered customer.';
                 else{$customerName=(string)$selectedCustomer['customer_name'];$customerPhone=(string)($selectedCustomer['phone']??'')?:null;$jobTypeId=(int)($selectedCustomer['job_type_id']??0)?:null;$customerType=(string)($selectedCustomer['customer_type']??'')?:null;$locationId=(int)($selectedCustomer['location_id']??0)?:null;$area=(string)($selectedCustomer['area']??'')?:null;}
@@ -93,7 +116,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
             $priceHistoryIds=is_array($postedProducts['price_history_id']??null)?$postedProducts['price_history_id']:[];
             $vins=is_array($postedProducts['vin_number']??null)?$postedProducts['vin_number']:[];
             if(!$sparkPlugIds)$error='Add at least one product.';
-            $plugStatement=db()->prepare("SELECT sp.id,sp.plug_number,sp.brand_name,(SELECT ph.id FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_price_id,(SELECT ph.price FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_price FROM spark_plugs sp WHERE sp.id=? AND LOWER(TRIM(sp.brand_name))=LOWER(TRIM(?)) AND sp.is_active=1");
+            $plugStatement=db()->prepare("SELECT sp.id,sp.plug_number,sp.brand_name,(SELECT ph.id FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_price_id,(SELECT ph.price FROM plug_price_history ph WHERE ph.spark_plug_id=sp.id AND ph.effective_at<=NOW() ORDER BY ph.effective_at DESC,ph.id DESC LIMIT 1) current_price FROM spark_plugs sp WHERE sp.id=? AND LOWER(TRIM(sp.brand_name))=LOWER(TRIM(?)) AND $sparkPlugVisibility");
             foreach($sparkPlugIds as $index=>$postedPlugId){
                 if($error!=='')break;
                 $sparkPlugId=max(0,(int)$postedPlugId);
@@ -117,7 +140,9 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                 $percentageDiscountAmount=round($baseLineTotal*$discountPercentage/100,2);
                 $manualDiscountAmount=$currentPrice>0&&$price<$currentPrice?round(($currentPrice-$price)*$quantity,2):0.0;
                 $customerDiscountAmount=round($manualDiscountAmount+$percentageDiscountAmount,2);
-                $commissionStatement=db()->prepare('SELECT commission_percentage FROM plug_commissions WHERE spark_plug_id=? AND is_active=1 LIMIT 1');$commissionStatement->execute([$sparkPlugId]);$commissionPercentage=$commissionApplies?(float)($commissionStatement->fetchColumn()?:0):null;
+                $commissionRule=$commissionApplies?pos_commission_rule_for($sparkPlugId,$saleVendorId?:null,$saleDate):null;
+                if($commissionApplies&&!$commissionRule){$error='No active commission rule covers '.$plug['brand_name'].' '.$plug['plug_number'].' for this vendor on '.$saleDate.'.';break;}
+                $commissionPercentage=$commissionApplies?(float)$commissionRule['commission_percentage']:null;
                 $lineTotal=max(0,round($baseLineTotal-$percentageDiscountAmount,2));
                 $discountedUnitPrice=max(0,round($price*(1-$discountPercentage/100),2));
                 $saleProducts[]=['plug'=>$plug,'spark_plug_id'=>$sparkPlugId,'price'=>$lineTotal,'base_unit_price'=>$price,'unit_price'=>$discountedUnitPrice,'list_unit_price'=>$listUnitPrice,'customer_discount_amount'=>$customerDiscountAmount,'customer_discount_percentage'=>$discountPercentage,'is_new_current_price'=>$isNewCurrentPrice,'quantity'=>$quantity,'price_history_id'=>$priceHistoryId?:null,'vin'=>$vin,'commission_percentage'=>$commissionPercentage,'commission_amount'=>$commissionApplies?round($lineTotal*(float)$commissionPercentage/100,2):null];
@@ -129,13 +154,21 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         $netSales=max(0,round($saleSubtotal-$deliveryCharge,2));
         $rawCommission=$commissionApplies?array_sum(array_map(static fn(array $product):float=>(float)($product['commission_amount']??0),$saleProducts)):0;
         $commissionAmount=$commissionApplies&&$saleSubtotal>0?round($rawCommission*($netSales/$saleSubtotal),2):null;
+        if($commissionApplies&&$saleSubtotal>0){
+            $allocatedCommission=0.0;$lastProductIndex=array_key_last($saleProducts);
+            foreach($saleProducts as $productIndex=>&$saleProduct){
+                $lineCommission=$productIndex===$lastProductIndex?round((float)$commissionAmount-$allocatedCommission,2):round((float)$saleProduct['commission_amount']*($netSales/$saleSubtotal),2);
+                $saleProduct['commission_amount']=max(0,$lineCommission);$allocatedCommission=round($allocatedCommission+$saleProduct['commission_amount'],2);
+            }
+            unset($saleProduct);
+        }
         $amountLessCommission=max(0,round($netSales-(float)($commissionAmount??0),2));
         $referralSourceId=null;
         if($error===''&&$referralName!==''){$source=db()->prepare('SELECT id,source_name FROM pos_referral_sources WHERE LOWER(TRIM(source_name))=LOWER(TRIM(?)) AND is_active=1 LIMIT 1');$source->execute([$referralName]);if($matched=$source->fetch()){$referralSourceId=(int)$matched['id'];$referralName=(string)$matched['source_name'];}}
         if($error===''){
             try{
                 db()->beginTransaction();
-                if($saleVendorId){
+                if(!$editSale&&$saleVendorId){
                     $lockStatement=db()->prepare('SELECT GET_LOCK(?,10)');$lockStatement->execute([vendor_day_lock_name($saleVendorId,app_business_date())]);
                     if((int)$lockStatement->fetchColumn()!==1)throw new RuntimeException('The sales-day lock could not be acquired.');
                     if(vendor_day_is_closed($saleVendorId))throw new DomainException('Sales are closed for this vendor today.');
@@ -167,14 +200,21 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                         $customerId=(int)db()->lastInsertId();
                     }
                 }
-                $saleRef=next_project_reference($isSorSale?'sor_sale':'pos_sale');
                 $saleVendor=current_vendor_profile();$salePersonnel=current_vendor_personnel();
+                $saleRef=$editSale?(string)$editSale['sale_ref']:next_vendor_sales_reference((string)($saleVendor['vendor_name']??''));
                 $salePersonnelName=$salePersonnel?trim(current_user_name()):'';
                 $newPriceIds=[];
                 $insertPriceHistory=db()->prepare('INSERT INTO plug_price_history(spark_plug_id,price,markup,wholesale,effective_at,note,recorded_by_user_id) VALUES(?,?,25.00,ROUND(? * 0.75,2),NOW(),?,?)');
                 foreach($saleProducts as &$saleProduct){if(!$saleProduct['is_new_current_price'])continue;$priceKey=$saleProduct['spark_plug_id'].'|'.number_format((float)$saleProduct['base_unit_price'],2,'.','');if(!isset($newPriceIds[$priceKey])){$insertPriceHistory->execute([$saleProduct['spark_plug_id'],$saleProduct['base_unit_price'],$saleProduct['base_unit_price'],'Updated automatically from POS sale '.$saleRef,current_user_id()]);$newPriceIds[$priceKey]=(int)db()->lastInsertId();}$saleProduct['price_history_id']=$newPriceIds[$priceKey];}unset($saleProduct);
-                db()->prepare('INSERT INTO pos_sales(sale_ref,sale_date,sale_source,vendor_id,vendor_name,vendor_personnel_id,vendor_personnel_name,customer_mode,customer_id,customer_name,customer_phone,job_type_id,customer_type,location_id,area,referral_source_id,referral_source,comment,subtotal,customer_discount_amount,sales_type,recipient_vendor_id,recipient_vendor_name,delivery_charge,net_sales,commission_amount,amount_less_commission,status,recorded_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$saleRef,$saleDate,$saleSource,(int)($saleVendor['id']??0)?:null,trim((string)($saleVendor['vendor_name']??''))?:null,(int)($salePersonnel['id']??0)?:null,$salePersonnelName?:null,$customerMode,$customerId,$customerName,$customerPhone,$jobTypeId,$customerType,$locationId,$area,$referralSourceId,$referralName?:null,$comment?:null,$saleSubtotal,$customerDiscountAmount,$salesType,$recipientVendorId?:null,$recipientVendorName,$deliveryCharge,$netSales,$commissionAmount,$amountLessCommission,'completed',current_user_id()]);
-                $saleId=(int)db()->lastInsertId();
+                if($editSale){
+                    $saleId=$editSaleId;
+                    $beforeSnapshot=['sale'=>$editSale,'items'=>$editItems];
+                    db()->prepare('UPDATE pos_sales SET sale_date=?,customer_mode=?,customer_id=?,customer_name=?,customer_phone=?,job_type_id=?,customer_type=?,location_id=?,area=?,referral_source_id=?,referral_source=?,comment=?,subtotal=?,customer_discount_amount=?,sales_type=?,recipient_vendor_id=?,recipient_vendor_name=?,delivery_charge=?,net_sales=?,commission_amount=?,amount_less_commission=?,payment_type=? WHERE id=?')->execute([$saleDate,$customerMode,$customerId,$customerName,$customerPhone,$jobTypeId,$customerType,$locationId,$area,$referralSourceId,$referralName?:null,$comment?:null,$saleSubtotal,$customerDiscountAmount,$salesType,$recipientVendorId?:null,$recipientVendorName,$deliveryCharge,$netSales,$commissionAmount,$amountLessCommission,$paymentType,$saleId]);
+                    db()->prepare('DELETE FROM pos_sale_items WHERE sale_id=?')->execute([$saleId]);
+                }else{
+                    db()->prepare('INSERT INTO pos_sales(sale_ref,sale_date,sale_source,vendor_id,vendor_name,vendor_personnel_id,vendor_personnel_name,customer_mode,customer_id,customer_name,customer_phone,job_type_id,customer_type,location_id,area,referral_source_id,referral_source,comment,subtotal,customer_discount_amount,sales_type,recipient_vendor_id,recipient_vendor_name,delivery_charge,net_sales,commission_amount,amount_less_commission,payment_type,status,recorded_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$saleRef,$saleDate,$saleSource,(int)($saleVendor['id']??0)?:null,trim((string)($saleVendor['vendor_name']??''))?:null,(int)($salePersonnel['id']??0)?:null,$salePersonnelName?:null,$customerMode,$customerId,$customerName,$customerPhone,$jobTypeId,$customerType,$locationId,$area,$referralSourceId,$referralName?:null,$comment?:null,$saleSubtotal,$customerDiscountAmount,$salesType,$recipientVendorId?:null,$recipientVendorName,$deliveryCharge,$netSales,$commissionAmount,$amountLessCommission,$paymentType,'completed',current_user_id()]);
+                    $saleId=(int)db()->lastInsertId();
+                }
                 $insertItem=db()->prepare('INSERT INTO pos_sale_items(sale_id,spark_plug_id,price_history_id,brand_name,plug_number,quantity,unit_price,list_unit_price,total_amount,customer_discount_amount,customer_discount_percentage,commission_percentage,commission_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)');
                 $insertVin=db()->prepare('INSERT INTO pos_sale_vins(sale_item_id,vin_number) VALUES(?,?)');
                 foreach($saleProducts as $saleProduct){
@@ -182,45 +222,57 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
                     $insertItem->execute([$saleId,$saleProduct['spark_plug_id'],$saleProduct['price_history_id'],$plug['brand_name'],$plug['plug_number'],$saleProduct['quantity'],$unitPrice,$saleProduct['list_unit_price'],$lineTotal,$saleProduct['customer_discount_amount'],$saleProduct['customer_discount_percentage'],$saleProduct['commission_percentage'],$saleProduct['commission_amount']]);
                     if($saleProduct['vin']!=='')$insertVin->execute([(int)db()->lastInsertId(),$saleProduct['vin']]);
                 }
+                if($editSale){
+                    $afterSnapshot=['sale'=>['sale_ref'=>$saleRef,'sale_date'=>$saleDate,'customer_mode'=>$customerMode,'customer_id'=>$customerId,'customer_name'=>$customerName,'customer_phone'=>$customerPhone,'job_type_id'=>$jobTypeId,'customer_type'=>$customerType,'location_id'=>$locationId,'area'=>$area,'referral_source'=>$referralName,'comment'=>$comment,'subtotal'=>$saleSubtotal,'customer_discount_amount'=>$customerDiscountAmount,'sales_type'=>$salesType,'recipient_vendor_id'=>$recipientVendorId?:null,'recipient_vendor_name'=>$recipientVendorName,'delivery_charge'=>$deliveryCharge,'net_sales'=>$netSales,'commission_amount'=>$commissionAmount,'amount_less_commission'=>$amountLessCommission],'items'=>$saleProducts];
+                    db()->prepare('INSERT INTO pos_sale_edit_audit(sale_id,edit_reason,before_snapshot,after_snapshot,edited_by_user_id) VALUES(?,?,?,?,?)')->execute([$saleId,trim((string)$_POST['edit_reason']),json_encode($beforeSnapshot,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),json_encode($afterSnapshot,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),current_user_id()]);
+                }
                 db()->commit();
                 $salesMenuReturn=requested_return_url(app_url($isSorSale?'pos.php?view=sor':'pos.php?view=sales'));
-                header('Location: '.app_url('pos-sale-receipt.php?id='.$saleId.'&sales_return_to='.rawurlencode($salesMenuReturn)));exit;
+                header('Location: '.app_url('pos-sale-receipt.php?id='.$saleId.($editSale?'':'&sales_return_to='.rawurlencode($salesMenuReturn))));exit;
             }catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():($exception instanceof PDOException&&$exception->getCode()==='23000'?'That VIN or sale record already exists.':'The sale could not be saved.');}
-            finally{if($saleVendorId){$release=db()->prepare('SELECT RELEASE_LOCK(?)');$release->execute([vendor_day_lock_name($saleVendorId,app_business_date())]);}}
+            finally{if(!$editSale&&$saleVendorId){$release=db()->prepare('SELECT RELEASE_LOCK(?)');$release->execute([vendor_day_lock_name($saleVendorId,app_business_date())]);}}
         }
     }
 }
 
-$pageTitle = $isSorSale?'SoR Sale':'POS Sales';
+$initialProducts=[];
+foreach($editItems as $item){$discount=(float)($item['customer_discount_percentage']??0);$storedUnit=(float)($item['unit_price']??0);$enteredPrice=$discount<100?round($storedUnit/(1-$discount/100),2):(float)($item['list_unit_price']??0);$initialProducts[]=['brand_name'=>(string)$item['brand_name'],'spark_plug_id'=>(int)$item['spark_plug_id'],'price'=>$enteredPrice,'price_history_id'=>(int)($item['price_history_id']??0),'quantity'=>(int)$item['quantity'],'discount_percentage'=>$discount,'vin_number'=>(string)($item['vin_number']??'')];}
+$initialLocationRegion='';if($editSale){foreach($locations as $location){if((int)$location['id']===(int)($editSale['location_id']??0)){$initialLocationRegion=(string)($location['region_code']?:$location['region_name']);break;}}}
+$pageTitle = $editSale?'Edit Receipt '.(string)$editSale['sale_ref']:($isSorSale?'SoR Sale':'POS Sales');
 $breadcrumbs = [
     ['label' => 'Home', 'url' => app_url('index.php')],
     ['label' => 'POS', 'url' => app_url('pos.php')],
-    ['label' => $isSorSale?'SoR Sale':'Sales'],
+    ['label' => $editSale?'Edit '.(string)$editSale['sale_ref']:($isSorSale?'SoR Sale':'Sales')],
 ];
-$internalBackUrl=requested_return_url(app_url($isSorSale?'pos.php?view=sor':'pos.php?view=sales'));
+$internalBackUrl=requested_return_url($editSale?app_url('pos-sale-receipt.php?id='.$editSaleId):app_url($isSorSale?'pos.php?view=sor':'pos.php?view=sales'));
 require_once __DIR__ . '/../includes/header.php';
 ?>
 <section class="content-panel pos-sales-panel" aria-labelledby="pos-sales-title">
     <div class="management-heading pos-sales-heading">
-        <div><span class="section-kicker"><?=$isSorSale?'SoR':'POS'?></span><h1 id="pos-sales-title"><?=$isSorSale?'SoR Sale':'Sales'?></h1></div>
+        <div><span class="section-kicker"><?=$editSale?'Receipt Correction':($isSorSale?'SoR':'POS')?></span><h1 id="pos-sales-title"><?=$editSale?'Edit '.e((string)$editSale['sale_ref']):($isSorSale?'SoR Sale':'Sales')?></h1><?php if($editSale):?><p>Correct this receipt without changing its reference or original vendor attribution.</p><?php endif;?></div>
         <div class="management-icon"><i class="fa-solid fa-cart-shopping"></i></div>
     </div>
     <?php if($message):?><div class="profile-message is-success"><?=e($message)?></div><?php endif;?>
     <?php if($error):?><div class="profile-message is-error"><?=e($error)?></div><?php endif;?>
 
-    <?php if($activeDayClosure):?><div class="profile-message is-error"><strong>Sales Closed</strong> at <?=e(date('H:i',strtotime((string)$activeDayClosure['closed_at'])))?>. Reports and receipts remain available.</div><?php else:?><form class="pos-sales-form pos-sales-form--sectioned" method="post" autocomplete="off" novalidate><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="sale_source" value="<?=e($saleSource)?>">
+    <?php if($activeDayClosure):?><div class="profile-message is-error"><strong>Sales Closed</strong> at <?=e(date('H:i',strtotime((string)$activeDayClosure['closed_at'])))?>. Reports and receipts remain available.</div><?php else:?><form class="pos-sales-form pos-sales-form--sectioned" method="post" autocomplete="off" novalidate><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="sale_source" value="<?=e($saleSource)?>"><input type="hidden" name="edit_sale_id" value="<?=$editSaleId?>"><?php if($editSale):?><input type="hidden" name="edit_reason" value="" data-pos-edit-reason><?php endif;?>
         <div class="pos-customer-mode" role="group" aria-label="Customer mode"><input type="hidden" name="customer_mode" value="registered" data-pos-customer-mode><button class="is-active" type="button" data-pos-customer-mode-button="registered">Registered</button><button type="button" data-pos-customer-mode-button="temp">Temp</button></div>
         <div class="profile-message is-error pos-sales-validation-message" data-pos-validation-message role="alert" hidden></div>
-        <nav class="pos-sales-section-menu" aria-label="Sales entry sections"><button type="button" class="is-active" data-pos-section-button="date"><i class="fa-solid fa-calendar-day"></i><span>Date</span></button><button type="button" data-pos-section-button="customer"><i class="fa-solid fa-user"></i><span>Customer</span></button><button type="button" data-pos-section-button="customer-type" data-pos-temp-only hidden><i class="fa-solid fa-id-badge"></i><span>Customer Type</span></button><button type="button" data-pos-section-button="sales-type"><i class="fa-solid fa-right-left"></i><span>Sale Type</span></button><button type="button" data-pos-section-button="product"><i class="fa-solid fa-box"></i><span>Product</span></button><button type="button" data-pos-section-button="delivery"><i class="fa-solid fa-truck"></i><span>Delivery Charges</span></button><button type="button" data-pos-section-button="referral" data-pos-temp-only hidden><i class="fa-solid fa-bullhorn"></i><span>How Did You Know Us?</span></button><button type="button" data-pos-section-button="comment"><i class="fa-solid fa-note-sticky"></i><span>Comment</span></button></nav>
+        <nav class="pos-sales-section-menu" aria-label="Sales entry sections"><button type="button" class="is-active" data-pos-section-button="date"><i class="fa-solid fa-calendar-day"></i><span>Date</span></button><button type="button" data-pos-section-button="customer"><i class="fa-solid fa-user"></i><span>Customer</span></button><button type="button" data-pos-section-button="customer-type" data-pos-temp-only hidden><i class="fa-solid fa-id-badge"></i><span>Customer Type</span></button><?php if(!$isSorSale):?><button type="button" data-pos-section-button="sales-type"><i class="fa-solid fa-right-left"></i><span>Sale Type</span></button><?php endif;?><button type="button" data-pos-section-button="payment"><i class="fa-solid fa-wallet"></i><span>Payment Type</span></button><button type="button" data-pos-section-button="product"><i class="fa-solid fa-box"></i><span>Product</span></button><button type="button" data-pos-section-button="delivery"><i class="fa-solid fa-truck"></i><span>Delivery Charges</span></button><button type="button" data-pos-section-button="referral" data-pos-temp-only hidden><i class="fa-solid fa-bullhorn"></i><span>How Did You Know Us?</span></button><button type="button" data-pos-section-button="comment"><i class="fa-solid fa-note-sticky"></i><span>Comment</span></button></nav>
         <details class="pos-sales-field is-active-section" data-pos-section="date" open>
             <summary><strong>Date</strong><span><?=e(date('d/m/Y'))?></span><i class="fa-solid fa-caret-down"></i></summary>
-            <div class="pos-sales-field__body"><label for="pos_sale_date">Sale date <span class="required-asterisk" aria-hidden="true">*</span></label><input id="pos_sale_date" name="sale_date" type="date" value="<?=e(date('Y-m-d'))?>" required></div>
+            <div class="pos-sales-field__body"><label for="pos_sale_date">Sale date <span class="required-asterisk" aria-hidden="true">*</span></label><input id="pos_sale_date" name="sale_date" type="date" value="<?=e((string)($editSale['sale_date']??date('Y-m-d')))?>" required></div>
         </details>
 
-        <details class="pos-sales-field" data-pos-section="sales-type" open>
+        <details class="pos-sales-field" data-pos-section="payment" open>
+            <summary><strong>Payment Type</strong><span data-pos-payment-type-summary><?=e(ucfirst((string)($editSale['payment_type']??'cash')))?></span><i class="fa-solid fa-caret-down"></i></summary>
+            <div class="pos-sales-field__body"><label for="pos_payment_type">Payment type</label><select id="pos_payment_type" name="payment_type" required><option value="cash" <?=($editSale['payment_type']??'cash')==='cash'?'selected':''?>>Cash</option><option value="credit" <?=($editSale['payment_type']??'')==='credit'?'selected':''?>>Credit</option></select></div>
+        </details>
+
+        <?php if(!$isSorSale):?><details class="pos-sales-field" data-pos-section="sales-type" open>
             <summary><strong>Sales Type</strong><span data-pos-sales-type-summary>Direct</span><i class="fa-solid fa-caret-down"></i></summary>
 <div class="pos-sales-field__body"><label for="pos_sales_type">Sales type <span class="required-asterisk" aria-hidden="true">*</span></label><select id="pos_sales_type" name="sales_type" data-popup-select data-popup-search required><option value="direct">Direct</option><option value="indirect">Indirect</option></select><div data-pos-recipient-vendor hidden><label for="pos_recipient_vendor">Recipient / Referring vendor <span class="required-asterisk" aria-hidden="true">*</span></label><select id="pos_recipient_vendor" name="recipient_vendor_id" data-vendor-selector data-popup-select data-popup-search data-popup-hide-empty><option value="">Search or select vendor</option><?php foreach($vendors as $vendor):?><option value="<?=(int)$vendor['id']?>"><?=e(implode(' · ',array_filter([(string)$vendor['vendor_name'],(string)($vendor['phone']??'')])))?></option><?php endforeach;?></select></div></div>
-        </details>
+        </details><?php endif;?>
 
         <details class="pos-sales-field" data-pos-section="customer" data-pos-registered-field open>
             <summary><strong>Customer</strong><span>Select</span><i class="fa-solid fa-caret-down"></i></summary>
@@ -289,11 +341,13 @@ require_once __DIR__ . '/../includes/header.php';
             <dl class="pos-sales-live-receipt__totals"><div><dt>Sales</dt><dd data-pos-live-subtotal>GHS 0.00</dd></div><div data-pos-live-discount-row hidden><dt>Customer discount</dt><dd data-pos-live-discount>− GHS 0.00</dd></div><div><dt>Delivery charges</dt><dd data-pos-live-delivery>GHS 0.00</dd></div><div class="is-net"><dt>Net sales</dt><dd data-pos-live-net>GHS 0.00</dd></div></dl>
         </aside>
 
-        <div class="form-actions pos-sales-actions"><a class="secondary-button" href="<?=e($internalBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a><button class="login-button" type="submit"><i class="fa-solid fa-floppy-disk"></i><span>Save Sale</span></button></div>
+        <div class="form-actions pos-sales-actions"><a class="secondary-button" href="<?=e($internalBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a><button class="login-button" type="submit"><i class="fa-solid fa-floppy-disk"></i><span><?=$editSale?'Save Receipt Changes':'Save Sale'?></span></button></div>
     </form><?php endif;?>
 </section>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    const editData=<?=json_encode($editSale?['customer_mode'=>(string)$editSale['customer_mode'],'customer_id'=>(int)($editSale['customer_id']??0),'customer_name'=>(string)$editSale['customer_name'],'customer_phone'=>(string)($editSale['customer_phone']??''),'job_type_id'=>(int)($editSale['job_type_id']??0),'location_id'=>(int)($editSale['location_id']??0),'location_region'=>$initialLocationRegion,'sales_type'=>(string)($editSale['sales_type']??'direct'),'recipient_vendor_id'=>(int)($editSale['recipient_vendor_id']??0),'delivery_charge'=>(float)($editSale['delivery_charge']??0),'referral_source'=>(string)($editSale['referral_source']??''),'comment'=>(string)($editSale['comment']??''),'products'=>$initialProducts]:null,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
+    if(editData){const setValue=(selector,value)=>{const control=document.querySelector(selector);if(control){control.value=value??'';if(typeof updateLookupButton==='function'&&control.matches('select'))updateLookupButton(control);}};setValue('#pos_sales_type',editData.sales_type);setValue('#pos_recipient_vendor',editData.recipient_vendor_id||'');setValue('#pos_customer',editData.customer_id||'');setValue('#pos_temp_customer_name',editData.customer_name);setValue('#pos_temp_phone',editData.customer_phone);setValue('#pos_temp_region',editData.location_region);setValue('#pos_temp_town',editData.location_id||'');setValue('#pos_customer_type',editData.job_type_id||'');setValue('#pos_delivery_charge',editData.delivery_charge);setValue('#pos_referral',editData.referral_source);setValue('#pos_comment',editData.comment);const dateSummary=document.querySelector('[data-pos-section="date"] summary span');if(dateSummary)dateSummary.textContent=new Date(document.querySelector('#pos_sale_date').value+'T00:00:00').toLocaleDateString();}
     const syncRequiredAsterisks = function () {
         document.querySelectorAll('.pos-sales-form label').forEach((label) => {
             const forId=label.getAttribute('for');
@@ -316,6 +370,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const salesTypeSummary = document.querySelector('[data-pos-sales-type-summary]');
     const syncSalesType = function () { const indirect=salesType?.value==='indirect'; if(recipientWrap)recipientWrap.hidden=!indirect; if(recipient){recipient.disabled=!indirect;recipient.required=indirect;} if(salesTypeSummary)salesTypeSummary.textContent=indirect?'Indirect':'Direct'; syncRequiredAsterisks(); };
     salesType?.addEventListener('change',syncSalesType);syncSalesType();
+    const paymentType=document.querySelector('#pos_payment_type');
+    const paymentTypeSummary=document.querySelector('[data-pos-payment-type-summary]');
+    const syncPaymentType=()=>{if(paymentTypeSummary)paymentTypeSummary.textContent=paymentType?.value==='credit'?'Credit':'Cash';};
+    paymentType?.addEventListener('change',syncPaymentType);syncPaymentType();
     const fields = Array.from(document.querySelectorAll('.pos-sales-field'));
     const customerSelect = document.querySelector('#pos_customer');
     const modeInput = document.querySelector('[data-pos-customer-mode]');
@@ -353,7 +411,8 @@ document.addEventListener('DOMContentLoaded', function () {
     };
     modeButtons.forEach((button) => button.addEventListener('click', () => { setCustomerMode(button.dataset.posCustomerModeButton); updateProducts(); }));
     customerTypeInput?.addEventListener('change', () => { if (modeInput?.value === 'temp' && customerTypeSummary) customerTypeSummary.textContent = customerTypeInput.selectedOptions?.[0]?.textContent.trim() || 'Select'; });
-    setCustomerMode('registered');
+    setCustomerMode(editData?.customer_mode||'registered');
+    if(editData?.customer_mode==='temp'&&customerTypeInput){customerTypeInput.value=String(editData.job_type_id||'');if(typeof updateLookupButton==='function')updateLookupButton(customerTypeInput);if(customerTypeSummary)customerTypeSummary.textContent=customerTypeInput.selectedOptions?.[0]?.textContent.trim()||'Select';}
     /* Single-product controls replaced by the repeatable product editor.
     const syncPlugOptions = function () {
         const brandName = brandSelect?.value || '';
@@ -498,7 +557,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         updateProducts();
     };
-    const addProduct = function () {
+    const addProduct = function (initial=null) {
         if(!productList||!productTemplate)return;
         productList.querySelectorAll('[data-pos-product]').forEach((product)=>product.classList.add('is-collapsed'));
         const fragment=productTemplate.content.cloneNode(true);
@@ -513,9 +572,17 @@ document.addEventListener('DOMContentLoaded', function () {
         const plugSelect=product?.querySelector('[data-pos-product-plug]');
         const plugButton=plugSelect?product.querySelector('[data-lookup-button="'+plugSelect.id+'"]'):null;
         if(plugButton){plugButton.disabled=true;plugButton.classList.add('is-disabled');}
+        if(initial&&product){
+            const brand=product.querySelector('[data-pos-product-brand]');const plug=product.querySelector('[data-pos-product-plug]');
+            if(brand)brand.value=initial.brand_name||'';
+            if(plug){Array.from(plug.options).forEach(option=>{if(!option.value){option.hidden=false;option.disabled=false;return;}const match=option.dataset.brandName===(initial.brand_name||'').trim().toLocaleLowerCase();option.hidden=!match;option.disabled=!match;});plug.value=String(initial.spark_plug_id||'');}
+            const assign=(selector,value)=>{const input=product.querySelector(selector);if(input)input.value=value??'';};assign('[data-pos-product-price]',initial.price);assign('[data-pos-product-price-history]',initial.price_history_id||'');assign('[data-pos-product-quantity]',initial.quantity);assign('[data-pos-product-discount]',initial.discount_percentage);assign('[data-pos-product-vin]',initial.vin_number);
+            if(plugButton){plugButton.disabled=false;plugButton.classList.remove('is-disabled');}
+            product.querySelectorAll('select').forEach(select=>{if(typeof updateLookupButton==='function')updateLookupButton(select);});
+        }
         updateProducts();
     };
-    addProductButton?.addEventListener('click',addProduct);
+    addProductButton?.addEventListener('click',()=>addProduct());
     productList?.addEventListener('change',function(event){
         const product=event.target.closest('[data-pos-product]');if(!product)return;
         if(event.target.matches('[data-pos-product-brand]'))syncProductBrand(product);
@@ -539,19 +606,25 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     const salesForm=document.querySelector('.pos-sales-form');
     const validationMessage=document.querySelector('[data-pos-validation-message]');
-    const fieldName=function(control){const label=control.closest('label')?.querySelector('span')?.textContent.trim()||control.closest('.pos-sales-field__body')?.querySelector('label')?.textContent.trim();return label||control.getAttribute('placeholder')||'required field';};
+    const fieldName=function(control){const label=control.closest('label')?.querySelector('span')?.textContent.trim()||control.closest('.pos-sales-field__body,.pos-sales-edit-reason__field')?.querySelector('label')?.textContent.trim();return label||control.getAttribute('placeholder')||'required field';};
     salesForm?.addEventListener('submit',function(event){
         if(validationMessage){validationMessage.hidden=true;validationMessage.textContent='';}
         const required=Array.from(salesForm.querySelectorAll('[required]')).filter((control)=>!control.disabled&&!control.closest('[hidden]'));
         const invalid=required.find((control)=>!control.checkValidity());
-        if(!invalid)return;
+        if(!invalid){
+            if(editData&&salesForm.dataset.editConfirmed!=='true'){
+                event.preventDefault();
+                showConfirmDialog({title:'Save receipt changes?',message:'Write why this receipt is being corrected. The reason will be kept in the revision history.',confirmLabel:'Save Changes',requireReason:true,reasonLabel:'Reason for correction',reasonPlaceholder:'Example: Corrected the product quantity from 4 to 2',confirmButtonClass:'login-button',iconClass:'fa-pen-to-square',onConfirm:(reason)=>{const reasonInput=salesForm.querySelector('[data-pos-edit-reason]');if(reasonInput)reasonInput.value=reason;salesForm.dataset.editConfirmed='true';salesForm.requestSubmit();}});
+            }
+            return;
+        }
         event.preventDefault();
         const section=invalid.closest('[data-pos-section]')?.dataset.posSection||'customer';showSection(section);
         const product=invalid.closest('[data-pos-product]');if(product)productList.querySelectorAll('[data-pos-product]').forEach((item)=>item.classList.toggle('is-collapsed',item!==product));
-        if(validationMessage){validationMessage.textContent='Please complete '+fieldName(invalid)+' before saving the sale.';validationMessage.hidden=false;validationMessage.scrollIntoView({behavior:'smooth',block:'center'});}
-        window.setTimeout(function(){const lookup=invalid.closest('.pos-transfer-field,.pos-sales-field__body')?.querySelector('[data-lookup-button]');(lookup||invalid).focus({preventScroll:true});},250);
+        if(validationMessage){validationMessage.textContent='Please complete '+fieldName(invalid)+' before saving the '+(editData?'receipt':'sale')+'.';validationMessage.hidden=false;validationMessage.scrollIntoView({behavior:'smooth',block:'center'});}
+        window.setTimeout(function(){const lookup=invalid.closest('.pos-transfer-field,.pos-sales-field__body,.pos-sales-edit-reason__field')?.querySelector('[data-lookup-button]');(lookup||invalid).focus({preventScroll:false});},250);
     });
-    addProduct();
+    if(editData?.products?.length)editData.products.forEach(product=>addProduct(product));else addProduct();
     fields.forEach(function (field, index) {
         const picker = field.querySelector('[data-pos-auto-picker]');
         if (!picker) return;

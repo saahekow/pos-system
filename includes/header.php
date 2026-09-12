@@ -28,10 +28,9 @@ if (!in_array($currentScript, $pagesWithOwnDeleteNotice, true)) {
                 : 'Record deleted successfully.');
     }
 }
-$internalBackUrl = safe_app_return_url(trim((string)($internalBackUrl ?? '')), '');
+$configuredBackUrl = safe_app_return_url(trim((string)($internalBackUrl ?? '')), '');
+$internalBackUrl = requested_return_url($configuredBackUrl);
 if ($internalBackUrl === '') {
-    $internalBackUrl = requested_return_url('');
-    if ($internalBackUrl === '') {
         for ($breadcrumbIndex = count($breadcrumbs) - 2; $breadcrumbIndex >= 0; $breadcrumbIndex--) {
             $breadcrumbUrl = safe_app_return_url(trim((string)($breadcrumbs[$breadcrumbIndex]['url'] ?? '')), '');
             if ($breadcrumbUrl !== '') {
@@ -39,12 +38,6 @@ if ($internalBackUrl === '') {
                 break;
             }
         }
-    }
-    if ($internalBackUrl === '') {
-        $referrerBackUrl = safe_app_return_url((string)($_SERVER['HTTP_REFERER'] ?? ''), '');
-        $currentRequestUrl = (string)($_SERVER['REQUEST_URI'] ?? '');
-        if ($referrerBackUrl !== '' && $referrerBackUrl !== $currentRequestUrl) $internalBackUrl = $referrerBackUrl;
-    }
     if ($internalBackUrl === '') $internalBackUrl = app_url('index.php');
 }
 ?>

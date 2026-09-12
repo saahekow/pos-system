@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 require_auth();
 ensure_destination_visit_schema();
+ensure_recycle_bin_schema();
 
 $requestedId = max(0, (int) ($_GET['id'] ?? $_POST['visit_id'] ?? 0));
 $returnTo = trim((string) ($_GET['return_to'] ?? $_POST['return_to'] ?? ''));
@@ -23,8 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_action'] ?? 
     } else {
         db()->beginTransaction();
         try {
-            db()->prepare('DELETE FROM destination_visits WHERE parent_visit_id=?')->execute([$rootId]);
-            db()->prepare('DELETE FROM destination_visits WHERE id=?')->execute([$rootId]);
+            $reason=requested_deletion_reason();soft_delete_record('legacy_visit',$rootId,$reason);
+            db()->prepare('UPDATE destination_visits SET deleted_at=NOW(),deleted_by_user_id=?,deletion_reason=? WHERE parent_visit_id=? AND deleted_at IS NULL')->execute([current_user_id(),$reason,$rootId]);
             db()->commit();
             $deleteReturnUrl = $returnTo !== '' ? $returnTo : app_url('reports.php?report=visits');
             $deleteReturnUrl .= str_contains($deleteReturnUrl, '?') ? '&deleted=1' : '?deleted=1';
@@ -32,12 +33,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_action'] ?? 
             exit;
         } catch (Throwable $exception) {
             if (db()->inTransaction()) db()->rollBack();
-            $deleteError = 'The visit could not be deleted.';
+            $deleteError = $exception instanceof DomainException?$exception->getMessage():'The visit could not be deleted.';
         }
     }
 }
 
-$statement = db()->prepare('SELECT dv.*,d.destination_name,d.destination_key,st.shop_type_name,l.region_name,l.mmda_name AS district_name,l.town_name,l.is_capital,u.full_name AS recorded_by,s.full_name AS staff_name,tr.trip_code,tr.trip_date FROM destination_visits dv INNER JOIN destinations d ON d.id=dv.destination_id LEFT JOIN shop_types st ON st.id=dv.shop_type_id LEFT JOIN locations l ON l.id=dv.location_id LEFT JOIN users u ON u.id=dv.recorded_by_user_id LEFT JOIN staff s ON s.id=dv.staff_id LEFT JOIN sales_trips tr ON tr.id=dv.sales_trip_id WHERE dv.id=?');
+$statement = db()->prepare('SELECT dv.*,d.destination_name,d.destination_key,st.shop_type_name,l.region_name,l.mmda_name AS district_name,l.town_name,l.is_capital,u.full_name AS recorded_by,s.full_name AS staff_name,tr.trip_code,tr.trip_date FROM destination_visits dv INNER JOIN destinations d ON d.id=dv.destination_id LEFT JOIN shop_types st ON st.id=dv.shop_type_id LEFT JOIN locations l ON l.id=dv.location_id LEFT JOIN users u ON u.id=dv.recorded_by_user_id LEFT JOIN staff s ON s.id=dv.staff_id LEFT JOIN sales_trips tr ON tr.id=dv.sales_trip_id WHERE dv.id=? AND dv.deleted_at IS NULL');
 $statement->execute([$rootId]);
 $visit = $statement->fetch();
 if (!$visit) {
@@ -72,7 +73,7 @@ require __DIR__.'/../includes/header.php';
         <div class="retailer-profile-title"><span class="section-kicker"><?=e((string)$visit['destination_name'])?></span><h1><?=e($displayName)?></h1><p><?=e(implode(', ', array_filter([(string)($visit['town_name']??''),(string)($visit['district_name']??''),(string)($visit['region_name']??'')])))?></p></div>
         <div class="table-actions retailer-heading-actions customer-detail-action-bar">
             <a class="secondary-button" href="<?=e($backUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a>
-            <?php if(empty($visit['normalized_customer_id'])):?><a class="secondary-button" href="<?=e(app_url('legacy-customer-location.php?source=destination_visit&id='.$rootId.'&return_to='.rawurlencode($backUrl)))?>"><i class="fa-solid fa-location-dot"></i><span>Assign Location</span></a><?php endif;?><?php if($canEdit): ?><a class="action-button" href="<?=e(app_url('visit-edit.php?id='.$rootId.($returnTo!==''?'&return_to='.rawurlencode($returnTo):'')))?>"><i class="fa-solid fa-pen"></i><span>Edit</span></a><?php endif;?><?php if($isAdmin): ?><form method="post" data-confirm-title="Delete destination visit?" data-confirm-message="This will permanently delete the registration and all of its followups."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_visit"><input type="hidden" name="visit_id" value="<?=$rootId?>"><input type="hidden" name="return_to" value="<?=e($backUrl)?>"><button class="action-button is-danger"><i class="fa-solid fa-trash"></i><span>Delete</span></button></form><?php endif; ?>
+            <?php if(empty($visit['normalized_customer_id'])):?><a class="secondary-button" href="<?=e(app_url('legacy-customer-location.php?source=destination_visit&id='.$rootId.'&return_to='.rawurlencode($backUrl)))?>"><i class="fa-solid fa-location-dot"></i><span>Assign Location</span></a><?php endif;?><?php if($canEdit): ?><a class="action-button" href="<?=e(app_url('visit-edit.php?id='.$rootId.($returnTo!==''?'&return_to='.rawurlencode($returnTo):'')))?>"><i class="fa-solid fa-pen"></i><span>Edit</span></a><?php endif;?><?php if($isAdmin): ?><form method="post" data-confirm-title="Delete destination visit?" data-confirm-message="This hides the registration and its follow-ups and keeps them in the Recycle Bin."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_visit"><input type="hidden" name="visit_id" value="<?=$rootId?>"><input type="hidden" name="return_to" value="<?=e($backUrl)?>"><button class="action-button is-danger"><i class="fa-solid fa-trash"></i><span>Delete</span></button></form><?php endif; ?>
             <span class="management-icon"><i class="fa-solid <?=$isTaxi?'fa-taxi':'fa-store'?>"></i></span>
         </div>
     </div>

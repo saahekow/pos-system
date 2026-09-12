@@ -4,6 +4,7 @@ require_module_access('activity_log');
 ensure_destination_visit_schema();
 ensure_sales_trip_assignment_schema();
 ensure_places_management_schema();
+ensure_recycle_bin_schema();
 
 $pageTitle = 'Activity Log';
 $breadcrumbs = [['label' => 'Home', 'url' => app_url('index.php')], ['label' => 'Activity Log']];
@@ -24,13 +25,14 @@ $sql = "SELECT st.id,st.trip_code,st.trip_date,st.journey_start_time,st.journey_
         FROM sales_trips st
         LEFT JOIN staff s ON s.id=st.staff_id
         LEFT JOIN staff companion ON companion.id=st.companion_staff_id
-        LEFT JOIN vehicles v ON v.id=st.vehicle_id";
+        LEFT JOIN vehicles v ON v.id=st.vehicle_id
+        WHERE st.deleted_at IS NULL";
 $params = [];
 if (!$isAdmin) {
-    $sql .= ' WHERE st.recorded_by_user_id=? OR st.staff_id=?
+    $sql .= ' AND (st.recorded_by_user_id=? OR st.staff_id=?
         OR EXISTS(SELECT 1 FROM sales_trip_staff_assignments a WHERE a.sales_trip_id=st.id AND a.staff_id=?)
         OR EXISTS(SELECT 1 FROM destination_visits dv WHERE dv.sales_trip_id=st.id AND (dv.recorded_by_user_id=? OR dv.staff_id=?))
-        OR EXISTS(SELECT 1 FROM visits nv WHERE nv.sales_trip_id=st.id AND (nv.recorded_by_user_id=? OR nv.staff_id=?))';
+        OR EXISTS(SELECT 1 FROM visits nv WHERE nv.sales_trip_id=st.id AND (nv.recorded_by_user_id=? OR nv.staff_id=?)))';
     $params = [$userId, $staffId, $staffId, $userId, $staffId, $userId, $staffId];
 }
 $sql .= ' ORDER BY st.trip_date DESC,st.id DESC LIMIT 300';

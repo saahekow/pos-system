@@ -61,7 +61,7 @@ require_once __DIR__ . '/../includes/header.php';
 <section class="management-panel retailer-visit-panel followup-profile-compact">
     <div class="management-heading retailer-detail-heading">
         <div><span class="section-kicker">Follow-up Profile</span><h1><?= e($displayName) ?></h1><p><?= e((string) $registration['destination_name']) ?><?= $registration['area'] ? ' · ' . e((string) $registration['area']) : '' ?></p></div>
-        <div class="retailer-heading-actions"><span class="status-badge is-active"><?= number_format(count($followups)) ?> Follow-up<?= count($followups) === 1 ? '' : 's' ?></span><a class="secondary-button" href="<?= e(app_url('reports.php?report=followup&mode=' . $returnMode)) ?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a></div>
+        <div class="retailer-heading-actions"><span class="status-badge is-active"><?= number_format(count($followups)) ?> Follow-up<?= count($followups) === 1 ? '' : 's' ?></span><a class="secondary-button" href="<?= e($internalBackUrl) ?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a></div>
     </div>
     <div class="sales-status-editor <?=$isSold?'is-sold':'is-unsold'?>" data-customer-sales-row><div><span class="section-kicker">POS Sales Status</span><strong><?=$isSold?'Yes — Purchased':'No — Not purchased'?></strong><small><?=$isSold?'A completed POS sale is linked to this customer.':'No completed POS sale is linked to this customer.'?></small></div></div>
     <div class="detail-grid detail-grid--plain retailer-profile-grid"><dl>

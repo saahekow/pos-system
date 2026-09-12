@@ -3,7 +3,7 @@ require_once __DIR__ . '/../config/app.php';
 require_module_access('pos');
 
 $view=(string)($_GET['view']??'menu');
-if(!in_array($view,['menu','sales','audit','direct-reports','reports','sor','sor-sale','sor-refund','sor-report','sor-audit','admin','setup'],true))$view='menu';
+if(!in_array($view,['menu','sales','audit','direct-reports','reports','sor','sor-reports','sor-sale','sor-refund','sor-report','sor-audit','admin','setup'],true))$view='menu';
 $vendorProfile=current_vendor_profile();
 $vendorIsSor=current_vendor_is_sor();
 $posPersonnel=current_vendor_personnel();
@@ -11,9 +11,9 @@ if($posPersonnel&&$view==='sor'&&(int)$posPersonnel['can_sor']!==1)$view='menu';
 if($vendorIsSor&&in_array($view,['sales','audit','direct-reports'],true))$view='sor';
 if($vendorProfile&&!$vendorIsSor&&($view==='sor'||str_starts_with($view,'sor-')))$view='menu';
 $canPosSales=can_access_menu_item('pos_shop_sales')||can_access_menu_item('pos_trip_sales')||can_access_menu_item('pos_promo');
-if(($view==='sales'&&!$canPosSales)||($view==='audit'&&!can_access_menu_item('pos_audit'))||(in_array($view,['direct-reports','reports'],true)&&!can_access_menu_item('pos_reports')))$view='menu';
+if(($view==='sales'&&!$canPosSales)||($view==='audit'&&!can_access_menu_item('pos_audit'))||(in_array($view,['direct-reports','sor-reports','reports'],true)&&!can_access_menu_item('pos_reports')))$view='menu';
 if(($view==='sor-audit'&&!can_access_menu_item('pos_audit'))||($view==='sor-report'&&!can_access_menu_item('pos_reports'))||($view==='sor-refund'&&!can_access_menu_item('pos_refund')))$view='menu';
-$pageTitle=match($view){'sales'=>'POS Direct Sales','audit'=>'POS Audit','direct-reports'=>'Direct Sales Reports','reports'=>'POS Reports','sor'=>'POS SoR','sor-sale'=>'SoR Sale','sor-refund'=>'SoR Refund','sor-report'=>'SoR Report','sor-audit'=>'SoR Audit','admin'=>'POS Admin','setup'=>'POS Setup',default=>'POS'};
+$pageTitle=match($view){'sales'=>'POS Direct Sales','audit'=>'POS Audit','direct-reports'=>'Direct Sales Reports','reports'=>'POS Reports','sor'=>'POS SoR','sor-reports'=>'SoR Reports','sor-sale'=>'SoR Sale','sor-refund'=>'SoR Refund','sor-report'=>'SoR Report','sor-audit'=>'SoR Audit','admin'=>'POS Admin','setup'=>'POS Setup',default=>'POS'};
 $breadcrumbs=[['label'=>'Home','url'=>app_url('index.php')],['label'=>'POS','url'=>app_url('pos.php')]];
 if(in_array($view,['audit','direct-reports'],true))$breadcrumbs[]=['label'=>'Direct Sales','url'=>app_url('pos.php?view=sales')];
 if(str_starts_with($view,'sor-'))$breadcrumbs[]=['label'=>'SoR','url'=>app_url('pos.php?view=sor')];
@@ -44,9 +44,11 @@ if($view==='menu'){
  $modules=[];
  if(!$posPersonnel||(int)$posPersonnel['can_sor']===1)$modules[]=['title'=>'Sale','description'=>'Record an SoR sale using the complete sales workflow.','icon'=>'fa-solid fa-cart-plus','url'=>app_url('pos-sales.php?source=sor&return_to='.rawurlencode(app_url('pos.php?view=sor')))];
  if(can_access_menu_item('pos_refund'))$modules[]=['title'=>'Refund','description'=>'SoR refund menu.','icon'=>'fa-solid fa-rotate-left','url'=>'#'];
- if(can_access_menu_item('pos_reports'))$modules[]=['title'=>'Report','description'=>'Open sales, refund, and notes reports containing only SoR transactions.','icon'=>'fa-solid fa-chart-column','url'=>app_url('pos-reports.php?view=menu&source=sor&return_to='.rawurlencode(app_url('pos.php?view=sor')))];
+ if(can_access_menu_item('pos_reports'))$modules[]=['title'=>'Report','description'=>'Open sales, refund, and notes reports containing only SoR transactions.','icon'=>'fa-solid fa-chart-column','url'=>app_url('pos.php?view=sor-reports')];
  if(can_access_menu_item('pos_audit'))$modules[]=['title'=>'Audit','description'=>'Open the SoR stock audit menus.','icon'=>'fa-solid fa-clipboard-list','url'=>app_url('pos.php?view=sor-audit')];
  if(current_user_role()==='vendor'&&$vendorProfile&&(int)$vendorProfile['user_id']===(int)current_user_id()){$todayClosure=vendor_day_is_closed((int)$vendorProfile['id']);$modules[]=['title'=>$todayClosure?'Sales Closed · '.date('H:i',strtotime((string)$todayClosure['closed_at'])):'Close Day','description'=>$todayClosure?'Today is closed for this vendor. Reports and receipts remain available.':'Review today’s complete vendor summary and close sales for the day.','icon'=>$todayClosure?'fa-solid fa-lock':'fa-solid fa-calendar-check','url'=>app_url('close-day.php')];}
+}elseif($view==='sor-reports'){
+ foreach([['Sales','sales'],['Refund','refunds'],['Notes','notes']] as [$title,$reportView])$modules[]=['title'=>$title,'description'=>'Open the SoR '.strtolower($title).' report.','icon'=>'fa-solid fa-chart-simple','url'=>app_url('pos-reports.php?view='.$reportView.'&source=sor&return_to='.rawurlencode(app_url('pos.php?view=sor-reports')))];
 }elseif($view==='reports'){
  foreach([['Sales','sales'],['Transfer','transfers'],['Refund','refunds'],['Notes','notes']] as [$title,$reportView])$modules[]=['title'=>$title,'description'=>'Open the POS '.strtolower($title).' report.','icon'=>'fa-solid fa-chart-simple','url'=>app_url('pos-reports.php?view='.$reportView)];
  if(current_user_role()==='vendor'&&$vendorProfile&&(int)$vendorProfile['user_id']===(int)current_user_id())$modules[]=['title'=>'Day Closures','description'=>'Review your previous Close Day records and immutable summary snapshots.','icon'=>'fa-solid fa-calendar-check','url'=>app_url('close-day.php?view=history')];
@@ -55,6 +57,7 @@ if($view==='menu'){
  if(!is_admin_user()){header('Location: '.app_url('pos.php'));exit;}
  $modules=[
  ['title'=>'Setup','description'=>'Configure POS referral and commission options.','icon'=>'fa-solid fa-sliders','url'=>app_url('pos.php?view=setup')],
+ ['title'=>'Credit Payment','description'=>'Receive and review customer credit payments.','icon'=>'fa-solid fa-hand-holding-dollar','url'=>app_url('credit-payment.php')],
  ['title'=>'Personnel Assignment','description'=>'Create and assign vendor personnel for SPW Sales access.','icon'=>'fa-solid fa-people-group','url'=>app_url('vendor-personnel.php')],
  ... (is_super_admin() ? [['title'=>'Day Closures','description'=>'View vendor closures, snapshots, and reopen audit history.','icon'=>'fa-solid fa-lock-open','url'=>app_url('close-day.php')]] : []),
  ];
@@ -63,6 +66,7 @@ if($view==='menu'){
  $modules=[
  ['title'=>'Referral Source Setup','description'=>'Manage referral choices used by POS Sales.','icon'=>'fa-solid fa-bullhorn','url'=>app_url('pos-referral-setup.php?return_to='.rawurlencode(app_url('pos.php?view=setup')))],
  ['title'=>'Plug Commission Setup','description'=>'Manage spark plug commission percentages.','icon'=>'fa-solid fa-percent','url'=>app_url('pos-discount-setup.php?return_to='.rawurlencode(app_url('pos.php?view=setup')))],
+ ['title'=>'Receipt Branding','description'=>'Upload vendor logos and signature images for sales receipts.','icon'=>'fa-solid fa-file-signature','url'=>app_url('pos-receipt-branding.php?return_to='.rawurlencode(app_url('pos.php?view=setup')))],
  ];
 }
 ?>

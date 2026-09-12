@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 
 require_menu_item_access('setup_destinations');
+ensure_recycle_bin_schema();
 ensure_destination_visit_schema();
 
 $pageTitle = 'Destination Setup';
@@ -50,14 +51,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Taxi Rank is the default destination and cannot be deleted.';
         } else {
             try {
-                $statement = db()->prepare('DELETE FROM destinations WHERE id = ?');
-                $statement->execute([$destinationId]);
-                $message = 'Destination deleted successfully.';
+                db()->beginTransaction();soft_delete_record('destination',$destinationId,requested_deletion_reason());db()->prepare('UPDATE destinations SET is_active=0 WHERE id=?')->execute([$destinationId]);db()->commit();
+                $message = 'Destination moved to the Recycle Bin.';
                 $destinationName = '';
                 $status = '1';
                 $editDestinationId = 0;
-            } catch (PDOException $exception) {
-                $error = 'This destination is already linked to trip activity, so it cannot be deleted.';
+            } catch (Throwable $exception) {
+                if(db()->inTransaction())db()->rollBack();$error = $exception instanceof DomainException?$exception->getMessage():'The destination could not be deleted.';
             }
         }
     } elseif ($destinationName === '') {
@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $destinations = db()
-    ->query('SELECT id, destination_name, destination_key, is_default, is_active, created_at FROM destinations ORDER BY is_default DESC, destination_name')
+    ->query('SELECT id, destination_name, destination_key, is_default, is_active, created_at FROM destinations WHERE deleted_at IS NULL ORDER BY is_default DESC, destination_name')
     ->fetchAll();
 
 require_once __DIR__ . '/../includes/header.php';

@@ -88,6 +88,7 @@ $breadcrumbs = [
     ['label' => 'POS', 'url' => app_url('pos.php')],
     ['label' => 'Transfer'],
 ];
+$internalBackUrl=requested_return_url(app_url('pos.php'));
 require_once __DIR__ . '/../includes/header.php';
 ?>
 <section class="content-panel pos-transfer-panel" aria-labelledby="pos-transfer-title">
@@ -172,7 +173,7 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="pos-transfer-note" data-transfer-section="comment"><textarea id="transfer_note" name="note" rows="3" placeholder="Add a transfer note (optional)" aria-label="Transfer note"></textarea></div>
 
         <div class="form-actions pos-transfer-actions">
-            <a class="secondary-button" href="<?= e(app_url('pos.php')) ?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a>
+            <a class="secondary-button" href="<?= e($internalBackUrl) ?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a>
             <button class="login-button" type="submit"><i class="fa-solid fa-paper-plane"></i><span>Send Transfer</span></button>
         </div>
         </div>

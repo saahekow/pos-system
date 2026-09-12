@@ -2,9 +2,10 @@
 require_once __DIR__ . '/../config/app.php';
 require_auth();
 ensure_destination_visit_schema();
+ensure_recycle_bin_schema();
 
 $id=max(0,(int)($_GET['id']??$_POST['trip_id']??0));
-$statement=db()->prepare('SELECT st.*,v.plate_number FROM sales_trips st LEFT JOIN vehicles v ON v.id=st.vehicle_id WHERE st.id=? LIMIT 1');
+$statement=db()->prepare('SELECT st.*,v.plate_number FROM sales_trips st LEFT JOIN vehicles v ON v.id=st.vehicle_id WHERE st.id=? AND st.deleted_at IS NULL LIMIT 1');
 $statement->execute([$id]);$trip=$statement->fetch();
 if(!$trip){http_response_code(404);exit('Trip not found.');}
 
@@ -21,13 +22,10 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
         else{
             try{
                 db()->beginTransaction();
-                foreach(['destination_visits','retailer_visits','retailers','taxi_rank_visits','sales_trip_vendor_assignments','sales_trip_staff_assignments'] as $table){
-                    if(db_table_exists($table)){db()->prepare("DELETE FROM `$table` WHERE sales_trip_id=?")->execute([$id]);}
-                }
-                db()->prepare('DELETE FROM sales_trips WHERE id=?')->execute([$id]);
+                soft_delete_record('trip',$id,requested_deletion_reason());
                 db()->commit();
                 header('Location: '.app_url('activity-log.php?trip_deleted=1'));exit;
-            }catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error='The trip could not be deleted because related records still depend on it.';}
+            }catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The trip could not be deleted.';}
         }
     }else{
         $vehicleId=max(0,(int)($_POST['vehicle_id']??0));
@@ -52,7 +50,7 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
 }
 
 $vehicles=db()->query("SELECT id,plate_number FROM vehicles WHERE status='active' ORDER BY plate_number")->fetchAll();
-$pageTitle='Edit Trip';$breadcrumbs=[['label'=>'Home','url'=>app_url('index.php')],['label'=>'Activity Log','url'=>app_url('activity-log.php')],['label'=>'Edit Trip']];
+$pageTitle='Edit Trip';$breadcrumbs=[['label'=>'Home','url'=>app_url('index.php')],['label'=>'Activity Log','url'=>app_url('activity-log.php')],['label'=>'Edit Trip']];$internalBackUrl=requested_return_url(app_url('activity-log.php'));
 require_once __DIR__.'/../includes/header.php';
 ?>
 <section class="management-panel"><div class="management-heading"><div><span class="section-kicker"><?=e((string)$trip['trip_code'])?></span><h1>Edit Trip</h1><p>Administrators and the person who started this trip can update its details.</p></div><div class="management-icon"><i class="fa-solid fa-route"></i></div></div>
@@ -65,9 +63,9 @@ require_once __DIR__.'/../includes/header.php';
 <div class="form-field"><label for="journey_start_kilometers">Start kilometers</label><input id="journey_start_kilometers" name="journey_start_kilometers" type="number" min="0" step="0.01" value="<?=e((string)$trip['journey_start_kilometers'])?>" required></div>
 <div class="form-field form-field--wide"><label for="notes">Notes</label><textarea id="notes" name="notes" rows="4"><?=e((string)($trip['notes']??''))?></textarea></div></div></form>
 <div class="trip-edit-actions">
-    <a class="secondary-button trip-edit-actions__back" href="<?=e(app_url('activity-log.php'))?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a>
+    <a class="secondary-button trip-edit-actions__back" href="<?=e($internalBackUrl)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a>
     <div class="trip-edit-actions__primary">
-        <?php if($isAdmin):?><form class="trip-edit-delete-form" method="post" data-confirm-title="Delete trip" data-confirm-message="This permanently deletes the trip and all records recorded under it."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="trip_id" value="<?=$id?>"><input type="hidden" name="form_action" value="delete_trip"><button class="danger-button" type="submit"><i class="fa-solid fa-trash"></i><span>Delete Trip</span></button></form><?php endif;?>
+        <?php if($isAdmin):?><form class="trip-edit-delete-form" method="post" data-confirm-title="Delete trip" data-confirm-message="This hides the trip from active reports and keeps it available in the Recycle Bin."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="trip_id" value="<?=$id?>"><input type="hidden" name="form_action" value="delete_trip"><button class="danger-button" type="submit"><i class="fa-solid fa-trash"></i><span>Delete Trip</span></button></form><?php endif;?>
         <button class="login-button" type="submit" form="tripUpdateForm"><span>Update Trip</span><i class="fa-solid fa-floppy-disk"></i></button>
     </div>
 </div>

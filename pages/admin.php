@@ -2,14 +2,12 @@
 require_once __DIR__ . '/../config/app.php';
 require_auth();
 
-$canAttendance=can_access_module('attendance');
-$canCustomerFollowup=can_access_module('sales_trip')||can_access_module('customer_followup');
-$setupPermissionKeys=['setup_accounts','setup_roles','setup_feedback','setup_referrals','setup_commissions','setup_destinations','setup_locations','setup_vendors','setup_shop_types','setup_customer_types','setup_vehicles','setup_attendance','setup_staff'];
+$setupPermissionKeys=['setup_accounts','setup_roles','setup_feedback','setup_referrals','setup_commissions','setup_destinations','setup_locations','setup_vendors','setup_shop_types','setup_customer_types','setup_vehicles','setup_staff'];
 $canSetup=(bool)array_filter($setupPermissionKeys,'can_access_menu_item');
 $canFullAdmin=is_admin_user()||(current_user_role()==='staff'&&in_array('admin',current_user_assigned_module_keys(),true));
 $canSystemAdmin=$canFullAdmin||$canSetup;
 $canReports=can_access_menu_item('admin_reports');
-if(!$canAttendance&&!$canCustomerFollowup&&!$canSystemAdmin&&!$canReports){header('Location: '.app_url('index.php'));exit;}
+if(!$canSystemAdmin&&!$canReports){header('Location: '.app_url('index.php'));exit;}
 
 $view=(string)($_GET['view']??'menu');
 if(!in_array($view,['menu','system','setup','assignment'],true))$view='menu';
@@ -24,8 +22,6 @@ require_once __DIR__ . '/../includes/header.php';
 
 $modules=[];
 if($view==='menu'){
- if($canAttendance)$modules[]=['title'=>'Attendance','description'=>'Mark attendance and open attendance tools.','icon'=>'fa-solid fa-calendar-check','url'=>app_url('attendance.php?return_to='.rawurlencode(app_url('admin.php')))];
- if($canCustomerFollowup)$modules[]=['title'=>'Customer Follow-up','description'=>'Find registered customers and record phone or physical follow-ups.','icon'=>'fa-solid fa-clipboard-check','url'=>app_url('followup.php?return_to='.rawurlencode(app_url('admin.php')))];
  if($canFullAdmin)$modules[]=['title'=>'Admin','description'=>'Open system setup and assignment menus.','icon'=>'fa-solid fa-gears','url'=>app_url('admin.php?view=system')];
  elseif($canSetup)$modules[]=['title'=>'Setup','description'=>'Open the setup menus assigned to your account.','icon'=>'fa-solid fa-sliders','url'=>app_url('setup.php')];
  if($canReports)$modules[]=['title'=>'Reports','description'=>'Open administrative and operational reports.','icon'=>'fa-solid fa-chart-line','url'=>app_url('reports.php?return_to='.rawurlencode(app_url('admin.php')))];
@@ -39,7 +35,6 @@ if($view==='menu'){
  $modules[]=['title'=>'System Setup','description'=>'Open all setup menus assigned to your account.','icon'=>'fa-solid fa-sliders','url'=>app_url('setup.php')];
  if(can_access_menu_item('setup_staff'))$modules[]=['title'=>'Staff Setup','description'=>'Manage staff profiles and team records.','icon'=>'fa-solid fa-id-card-clip','url'=>app_url('staff-setup.php')];
  if(can_access_menu_item('setup_vehicles'))$modules[]=['title'=>'Vehicle Setup','description'=>'Manage vehicles available to trips and vehicle logs.','icon'=>'fa-solid fa-car-side','url'=>app_url('vehicle-setup.php')];
- if(can_access_menu_item('setup_attendance'))$modules[]=['title'=>'Attendance Setup','description'=>'Manage attendance sessions and GPS locations.','icon'=>'fa-solid fa-calendar-plus','url'=>app_url('attendance-setup.php')];
 }else{
  $modules=[
  ['title'=>'Staff Assignments','description'=>'Assign operational menu access to staff accounts.','icon'=>'fa-solid fa-user-check','url'=>app_url('assignments.php?return_to='.rawurlencode(app_url('admin.php?view=assignment')))],

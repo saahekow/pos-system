@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config/app.php';
 ensure_customer_promo_plug_schema();
 require_module_access('registration_records');
 ensure_places_management_schema();
+ensure_recycle_bin_schema();
 
 function place_details_upload(string $field, array $allowed, int $maxBytes): ?string
 {
@@ -187,9 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$canManageLocationRecords) {
             $error = 'You do not have permission to delete this business location.';
         } else {
-            db()->prepare('UPDATE business_locations SET is_active=0 WHERE id=?')->execute([$placeId]);
-            header('Location: '.$returnTo.(str_contains($returnTo,'?')?'&':'?').'deleted=1');
-            exit;
+            try{db()->beginTransaction();soft_delete_record('location',$placeId,requested_deletion_reason());db()->prepare('UPDATE business_locations SET is_active=0 WHERE id=?')->execute([$placeId]);db()->commit();header('Location: '.$returnTo.(str_contains($returnTo,'?')?'&':'?').'deleted=1');exit;}catch(Throwable $exception){if(db()->inTransaction())db()->rollBack();$error=$exception instanceof DomainException?$exception->getMessage():'The location could not be deleted.';}
         }
     } elseif ((string)($_POST['form_action'] ?? '') === 'move_customer') {
         $targetPlaceId=max(0,(int)($_POST['target_bus_loc_id']??0));
@@ -398,14 +397,14 @@ $placeVisits = $statement->fetchAll();
 
 $statement = db()->prepare(
     "SELECT a.*,ps.session_ref,st.trip_code,c.customer_ref,c.customer_name,
-            cs.sale_record_ref,cs.sales_ref,cs.sale_confirmed,
+            CONCAT('PROMO-',cs.id) AS sale_record_ref,NULL AS sales_ref,0 AS sale_confirmed,
             (SELECT n.feedback FROM visit_notes n WHERE n.visit_id=a.id ORDER BY n.id DESC LIMIT 1) AS feedback,
             (SELECT n.note FROM visit_notes n WHERE n.visit_id=a.id ORDER BY n.id DESC LIMIT 1) AS note
      FROM visits a
      INNER JOIN customers c ON c.id=a.customer_id
      LEFT JOIN place_visit_sessions ps ON ps.id=a.place_session_id
      LEFT JOIN sales_trips st ON st.id=a.sales_trip_id
-     LEFT JOIN customer_sales cs ON cs.visit_id=a.id
+     LEFT JOIN customer_promo_plugs cs ON cs.visit_id=a.id
      WHERE a.bus_loc_id=? ORDER BY a.id DESC"
 );
 $statement->execute([$placeId]);
@@ -421,8 +420,9 @@ require_once __DIR__ . '/../includes/header.php';
     <?php if ($message): ?><div class="profile-message is-success"><?=e($message)?></div><?php endif; ?>
     <?php if ($error): ?><div class="profile-message is-error"><?=e($error)?></div><?php endif; ?>
     <div class="management-heading"><div><span class="section-kicker"><?= e($place['bus_loc_ref']) ?></span><h1><?= e($placeDisplayName) ?></h1><p><i class="fa-solid fa-location-dot"></i> <?= e(trim(($place['town_name'] ?? '').' / '.($place['area'] ?? ''),' /') ?: 'Location details pending') ?></p></div><div class="management-icon"><i class="fa-solid fa-shop"></i></div></div>
-    <?php if($canManageLocationRecords):?><form method="post" class="form-actions" data-confirm-title="Delete location?" data-confirm-message="This location will be removed from active records."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_place"><input type="hidden" name="return_to" value="<?=e($returnTo)?>"><button class="danger-button" type="submit"><i class="fa-solid fa-trash"></i><span>Delete Location</span></button></form><?php endif;?>
+    <div class="place-detail-action-panel">
     <div class="place-detail-actions"><a class="secondary-button" href="<?=e($returnTo)?>"><i class="fa-solid fa-arrow-left"></i><span>Back</span></a><a class="secondary-button" href="<?=e(app_url('place-details.php?id='.$placeId.($editMode?'':'&edit=1').'&return_to='.rawurlencode($returnTo)))?>"><i class="fa-solid fa-pen"></i><span><?=$editMode?'Cancel Edit':'Edit Location'?></span></a><?php if($isCurrentActiveLocation):?><a class="login-button" href="<?=e(app_url('normalized-customer.php?stage=activity'))?>"><span>Continue at This Location</span><i class="fa-solid fa-arrow-right"></i></a><?php else:?><form method="post" action="<?= e(app_url('normalized-customer.php?stage=existing-place')) ?>"><input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>"><input type="hidden" name="form_action" value="select_place"><input type="hidden" name="bus_loc_id" value="<?= (int)$place['id'] ?>"><button class="login-button" type="submit"><span>Continue at This Location</span><i class="fa-solid fa-arrow-right"></i></button></form><?php endif;?></div>
+    </div>
     <?php if($editMode && (int)($place['is_legacy_placeholder']??0)===1): ?>
     <form class="record-form mobile-line-form" method="post" action="<?=e(app_url('place-details.php?id='.$placeId.'&edit=1&customer_id='.$legacyCustomerId.'&return_to='.rawurlencode($returnTo)))?>">
         <input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="assign_existing_location"><input type="hidden" name="return_to" value="<?=e($returnTo)?>">
@@ -432,6 +432,7 @@ require_once __DIR__ . '/../includes/header.php';
         </div><div class="form-actions"><button class="login-button" type="submit"><i class="fa-solid fa-link"></i><span>Assign to Existing Location</span></button></div></div></details>
     </form>
     <?php endif; ?>
+    <div class="place-detail-admin-actions">
     <?php if($canManageLocationRecords && (int)($place['is_legacy_placeholder']??0)!==1): ?>
     <form class="record-form mobile-line-form" method="post" action="<?=e(app_url('place-details.php?id='.$placeId.'&edit=1&return_to='.rawurlencode($returnTo)))?>" data-confirm-title="Move customer" data-confirm-message="Move the selected customer and their related records to the selected business location?">
         <input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="move_customer"><input type="hidden" name="return_to" value="<?=e($returnTo)?>">
@@ -442,6 +443,8 @@ require_once __DIR__ . '/../includes/header.php';
         <details class="place-admin-action"><summary class="secondary-button secondary-button--small"><i class="fa-solid fa-code-merge"></i><span>Merge Duplicate</span></summary><div class="place-admin-action__body"><p class="muted-text">Keep one location reference for all related customers and records.</p><div class="form-grid"><div class="form-field form-field--wide"><label>Business Location to Keep</label><select name="target_bus_loc_id" data-popup-select required><option value="">Search or select location</option><?php foreach($existingBusinessLocations as $existingPlace):?><option value="<?=(int)$existingPlace['id']?>"><?=e(implode(' - ',array_filter([(string)$existingPlace['bus_loc_ref'],(string)$existingPlace['business_name'],trim((string)$existingPlace['town_name'].' / '.(string)$existingPlace['area'],' /')])) )?></option><?php endforeach;?></select></div></div><div class="form-actions"><button class="login-button" type="submit"><i class="fa-solid fa-code-merge"></i><span>Merge into Selected Location</span></button></div></div></details>
     </form>
     <?php endif; ?>
+    <?php if($canManageLocationRecords):?><form method="post" class="place-detail-delete-action" data-confirm-title="Delete location?" data-confirm-message="This location will be removed from active records."><input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="delete_place"><input type="hidden" name="return_to" value="<?=e($returnTo)?>"><button class="danger-button" type="submit"><i class="fa-solid fa-trash"></i><span>Delete Location</span></button></form><?php endif;?>
+    </div>
     <?php if($editMode): ?>
     <form class="record-form mobile-line-form place-edit-registration-form" method="post" enctype="multipart/form-data" action="<?=e(app_url('place-details.php?id='.$placeId.'&edit=1&return_to='.rawurlencode($returnTo)))?>">
         <input type="hidden" name="csrf_token" value="<?=e(csrf_token())?>"><input type="hidden" name="form_action" value="update_place"><input type="hidden" name="return_to" value="<?=e($returnTo)?>">
